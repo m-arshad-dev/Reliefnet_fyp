@@ -1,9 +1,9 @@
-# DRCRMS — Build Context for Claude Code
+# RELIEFNET — Build Context for Claude Code
 
 ## Read first
-- Architecture/schema/API reference: docs/DRCRMS_v2.md  (Sections 1–7)
-- Build order (what to build when):    docs/DRCRMS_PLAN_v3_VERTICAL.md
-- We build ONE slice at a time, in order. Current slice: <update each time>
+- Architecture/schema/API reference: docs/RELIEFNET_v2.md  (Sections 1–7)
+- Build order (what to build when):    docs/RELIEFNET_PLAN_v3_VERTICAL.md
+- We build ONE slice at a time, in order. Current slice: Slice 0 (Walking Skeleton) — built; next: Slice 1 (Identity)
 
 ## Non-negotiable laws (do not violate without asking)
 1. Raw SQL via the `pg` driver only. No ORM, no query builder.

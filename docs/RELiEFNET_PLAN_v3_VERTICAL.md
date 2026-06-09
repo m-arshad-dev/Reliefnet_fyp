@@ -1,4 +1,4 @@
-# DRCRMS — Vertical-Slice Build Plan (v3)
+# RELIEFNET — Vertical-Slice Build Plan (v3)
 
 **Project:** Disaster Relief Coordination & Resource Management System
 **Supersedes the build roadmap (Section 8) of v2.** All architecture, schema, and API reference from v2 (Sections 1–7) still hold — this document only changes *how the work is sequenced*.

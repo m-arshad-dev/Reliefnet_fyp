@@ -1,4 +1,4 @@
-# DRCRMS — Complete Development & Implementation Plan (v2)
+# RELIEFNET — Complete Development & Implementation Plan (v2)
 
 **Project:** Disaster Relief Coordination & Resource Management System
 **Type:** Workflow-based multi-NGO coordination platform (no payments, no automated logistics)
@@ -22,7 +22,7 @@ This plan is ordered so you can build bottom-up: database → backend core → d
 
 ## 1. Technology Stack & Rationale
 
-| Layer | Choice | Why it fits DRCRMS |
+| Layer | Choice | Why it fits RELIEFNET |
 | --- | --- | --- |
 | Mobile client (field) | **Flutter 3.x (Dart)** | Field roles on Android (primary device) + offline-first via local SQLite. |
 | Web client (control center) | **React 18 + Vite + TypeScript** | Admin/auditor dashboards: heavy data grids, charts, reconciliation diff UI. Shares the same REST API. |
@@ -557,7 +557,7 @@ GET    /audit/verify                       # recompute hash chain integrity
 
 ## 6. Client Platforms — Web Control Center + Mobile Field Client
 
-DRCRMS ships **two thin clients over one shared REST API**. Neither client holds business logic; both call the same `/api/v1` endpoints. The split is by operational environment, not by feature duplication.
+RELIEFNET ships **two thin clients over one shared REST API**. Neither client holds business logic; both call the same `/api/v1` endpoints. The split is by operational environment, not by feature duplication.
 
 ### 6.1 Platform–role split matrix
 
@@ -799,7 +799,7 @@ Focused React (Vite + TS) sprint for **admin roles** (System Admin, NGO Admin, A
 
 - **Why raw SQL instead of Prisma?** Three subsystems — RLS session variables, chained audit writes, and the beneficiary duplicate transaction — require explicit, visible transaction boundaries. An ORM adds an opaque layer that makes debugging isolation failures during a live demo significantly harder. With `pg`, every `SET LOCAL`, `BEGIN`, and `COMMIT` is in plain sight.
 - **Why both a web portal and a mobile app?** Deliberate decoupling: Web Control Center handles desk work (admin tables, bulk ingestion, analytics, audit validation, conflict reconciliation) on large screens with stable internet. Mobile Field Client handles offline data capture in low-connectivity zones. A single app would degrade both experiences.
-- **Why no payments?** Deliberate scope boundary — DRCRMS is an orchestration/tracking engine. Keeps feasibility tight and security surface small.
+- **Why no payments?** Deliberate scope boundary — RELIEFNET is an orchestration/tracking engine. Keeps feasibility tight and security surface small.
 - **How do you protect identity?** CNICs are SHA-256 hashed with a server pepper; raw IDs are never stored, yet cross-NGO duplicates are still detectable via the hash index.
 - **Why flag, not block?** Humanitarian judgment must stay with coordinators; the system surfaces evidence, humans decide.
 - **What makes the audit log trustworthy?** Append-only + hash-chained rows + DB-level `REVOKE UPDATE, DELETE`. Any edit breaks the chain, which `/audit/verify` detects. Correction notes are embedded in ledger metadata, making them tamper-evident too.
