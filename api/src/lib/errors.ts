@@ -28,8 +28,34 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+export class ForbiddenError extends AppError {
+  constructor(message = 'Forbidden') {
+    super(403, 'FORBIDDEN', message);
+  }
+}
+
 export class NotFoundError extends AppError {
   constructor(message = 'Not found') {
     super(404, 'NOT_FOUND', message);
   }
+}
+
+export class ConflictError extends AppError {
+  constructor(message = 'Conflict') {
+    super(409, 'CONFLICT', message);
+  }
+}
+
+// Postgres raises SQLSTATE 23505 on a unique-constraint violation. Repositories
+// surface the raw pg error; services use this to translate it into a 409, reading
+// `constraint` to craft a precise message (which unique index was hit).
+export function isUniqueViolation(
+  err: unknown,
+): err is { code: string; constraint?: string } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === '23505'
+  );
 }

@@ -7,7 +7,7 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      user?: { sub: string; role: string };
+      user?: { sub: string; role: string; ngoId: string | null };
     }
   }
 }
@@ -20,7 +20,7 @@ export const authenticate: RequestHandler = (req, _res, next) => {
   const token = header.slice('Bearer '.length).trim();
   try {
     const claims = verifyAccess(token);
-    req.user = { sub: claims.sub, role: claims.role };
+    req.user = { sub: claims.sub, role: claims.role, ngoId: claims.ngoId ?? null };
     next();
   } catch (err) {
     next(err);

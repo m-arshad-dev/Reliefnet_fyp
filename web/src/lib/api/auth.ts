@@ -5,6 +5,7 @@ export interface PublicUser {
   email: string;
   fullName: string;
   role: string;
+  ngoId: string | null;
 }
 
 interface Envelope<T> {

@@ -8,6 +8,7 @@ import { UnauthorizedError } from './errors';
 export interface AccessClaims {
   sub: string; // user id
   role: string;
+  ngoId: string | null; // tenant; null for global roles (system_admin / auditor)
   type: 'access';
 }
 
@@ -16,7 +17,7 @@ export interface RefreshClaims {
   type: 'refresh';
 }
 
-export function signAccess(payload: { sub: string; role: string }): string {
+export function signAccess(payload: { sub: string; role: string; ngoId: string | null }): string {
   const options: SignOptions = { expiresIn: env.JWT_ACCESS_TTL as SignOptions['expiresIn'] };
   return jwt.sign({ ...payload, type: 'access' }, env.JWT_ACCESS_SECRET, options);
 }

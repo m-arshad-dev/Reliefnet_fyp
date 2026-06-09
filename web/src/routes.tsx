@@ -1,13 +1,26 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { RequireAuth } from '@/lib/auth/RequireAuth';
+import { RequireRole } from '@/lib/auth/RequireRole';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
+import { NgosPage } from '@/features/ngos/NgosPage';
+import { StaffPage } from '@/features/users/StaffPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   {
     element: <RequireAuth />,
-    children: [{ path: '/dashboard', element: <DashboardPage /> }],
+    children: [
+      { path: '/dashboard', element: <DashboardPage /> },
+      {
+        element: <RequireRole allow={['system_admin']} />,
+        children: [{ path: '/ngos', element: <NgosPage /> }],
+      },
+      {
+        element: <RequireRole allow={['ngo_admin']} />,
+        children: [{ path: '/staff', element: <StaffPage /> }],
+      },
+    ],
   },
   { path: '/', element: <Navigate to="/dashboard" replace /> },
   { path: '*', element: <Navigate to="/dashboard" replace /> },
