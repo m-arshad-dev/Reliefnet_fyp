@@ -6,6 +6,8 @@ import userRoutes from './user.routes';
 import locationRoutes from './location.routes';
 import disasterRoutes from './disaster.routes';
 import campaignRoutes from './campaign.routes';
+import needsRoutes from './needs.routes';
+import offersRoutes from './offers.routes';
 
 const router = Router();
 
@@ -16,5 +18,7 @@ router.use('/users', userRoutes);
 router.use('/locations', locationRoutes);
 router.use('/disasters', disasterRoutes);
 router.use('/campaigns', campaignRoutes);
+router.use('/needs', needsRoutes);
+router.use('/offers', offersRoutes);
 
 export default router;

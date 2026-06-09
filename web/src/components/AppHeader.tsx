@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 // the route guards), so a volunteer literally has no NGOs/Staff link to click.
 const NAV: { to: string; label: string; roles: string[] }[] = [
   { to: '/dashboard', label: 'Dashboard', roles: ['*'] },
+  { to: '/coordination', label: 'Board', roles: ['system_admin', 'ngo_admin', 'field_coordinator'] },
   { to: '/ngos', label: 'NGOs', roles: ['system_admin'] },
   { to: '/disasters', label: 'Disasters', roles: ['system_admin'] },
   { to: '/staff', label: 'Staff', roles: ['ngo_admin'] },

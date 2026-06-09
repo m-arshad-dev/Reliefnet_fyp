@@ -7,7 +7,7 @@
 // and `user:manage` (ngo_admin) are wired to routes in Slice 1. The rest light up
 // as their slices land (disasters, inventory, tasks, beneficiaries, audit).
 export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
-  system_admin: new Set(['ngo:manage', 'disaster:create', 'audit:read']),
+  system_admin: new Set(['ngo:manage', 'disaster:create', 'audit:read', 'board:read']),
   ngo_admin: new Set([
     'user:manage',
     'inventory:manage',
@@ -17,6 +17,8 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'beneficiary:override_flag',
     'task:create',
     'task:escalate',
+    'offer:create',
+    'board:read',
   ]),
   field_coordinator: new Set([
     'campaign:read',
@@ -24,6 +26,8 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'task:escalate',
     'beneficiary:register',
     'beneficiary:verify',
+    'need:create',
+    'board:read',
   ]),
   volunteer: new Set(['task:execute', 'beneficiary:register']),
   data_entry: new Set(['beneficiary:register']),
