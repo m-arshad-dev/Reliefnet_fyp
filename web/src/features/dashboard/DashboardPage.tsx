@@ -9,24 +9,40 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 
-// Role-aware home. The header carries the nav; here we surface a primary action
-// card for the roles that have a Slice 1 screen.
-const QUICK_LINKS: Record<string, { to: string; title: string; description: string }> = {
-  system_admin: {
-    to: '/ngos',
-    title: 'NGOs',
-    description: 'Onboard and vet NGOs, then activate or suspend them.',
-  },
-  ngo_admin: {
-    to: '/staff',
-    title: 'Staff',
-    description: 'Add field coordinators, volunteers, and data-entry users to your NGO.',
-  },
+// Role-aware home. The header carries the nav; here we surface action cards for the
+// roles that have a screen so far.
+interface QuickLink {
+  to: string;
+  title: string;
+  description: string;
+}
+
+const QUICK_LINKS: Record<string, QuickLink[]> = {
+  system_admin: [
+    { to: '/ngos', title: 'NGOs', description: 'Onboard and vet NGOs, then activate or suspend them.' },
+    {
+      to: '/disasters',
+      title: 'Disasters',
+      description: 'Declare global disaster events that NGOs run campaigns under.',
+    },
+  ],
+  ngo_admin: [
+    {
+      to: '/staff',
+      title: 'Staff',
+      description: 'Add field coordinators, volunteers, and data-entry users to your NGO.',
+    },
+    {
+      to: '/campaigns',
+      title: 'Campaigns',
+      description: 'Launch campaigns under a disaster, scoped to a region, and move their status.',
+    },
+  ],
 };
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const quickLink = user ? QUICK_LINKS[user.role] : undefined;
+  const quickLinks = user ? (QUICK_LINKS[user.role] ?? []) : [];
 
   return (
     <div className="min-h-screen bg-muted/20">
@@ -39,16 +55,20 @@ export function DashboardPage() {
           </p>
         </div>
 
-        {quickLink ? (
-          <Link to={quickLink.to} className="block max-w-md">
-            <Card className="transition-colors hover:bg-accent/40">
-              <CardHeader>
-                <CardTitle className="text-lg">{quickLink.title}</CardTitle>
-                <CardDescription>{quickLink.description}</CardDescription>
-              </CardHeader>
-              <CardContent className="text-sm text-primary">Open {quickLink.title} →</CardContent>
-            </Card>
-          </Link>
+        {quickLinks.length > 0 ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {quickLinks.map((link) => (
+              <Link key={link.to} to={link.to} className="block">
+                <Card className="h-full transition-colors hover:bg-accent/40">
+                  <CardHeader>
+                    <CardTitle className="text-lg">{link.title}</CardTitle>
+                    <CardDescription>{link.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="text-sm text-primary">Open {link.title} →</CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">
             No admin tools for your role yet — field workflows arrive in later slices.

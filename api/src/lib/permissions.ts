@@ -13,11 +13,13 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'inventory:manage',
     'inventory:correct',
     'campaign:create',
+    'campaign:read',
     'beneficiary:override_flag',
     'task:create',
     'task:escalate',
   ]),
   field_coordinator: new Set([
+    'campaign:read',
     'task:create',
     'task:escalate',
     'beneficiary:register',

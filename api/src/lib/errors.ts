@@ -59,3 +59,17 @@ export function isUniqueViolation(
     (err as { code?: unknown }).code === '23505'
   );
 }
+
+// Postgres raises SQLSTATE 23503 on a foreign-key violation (e.g. a campaign pointing
+// at a region_id that doesn't exist). Services translate it into a 422 rather than
+// leaking a raw 500.
+export function isForeignKeyViolation(
+  err: unknown,
+): err is { code: string; constraint?: string } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === '23503'
+  );
+}

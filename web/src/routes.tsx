@@ -5,6 +5,8 @@ import { LoginPage } from '@/features/auth/LoginPage';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { NgosPage } from '@/features/ngos/NgosPage';
 import { StaffPage } from '@/features/users/StaffPage';
+import { DisastersPage } from '@/features/disasters/DisastersPage';
+import { CampaignsPage } from '@/features/campaigns/CampaignsPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -14,11 +16,17 @@ export const router = createBrowserRouter([
       { path: '/dashboard', element: <DashboardPage /> },
       {
         element: <RequireRole allow={['system_admin']} />,
-        children: [{ path: '/ngos', element: <NgosPage /> }],
+        children: [
+          { path: '/ngos', element: <NgosPage /> },
+          { path: '/disasters', element: <DisastersPage /> },
+        ],
       },
       {
         element: <RequireRole allow={['ngo_admin']} />,
-        children: [{ path: '/staff', element: <StaffPage /> }],
+        children: [
+          { path: '/staff', element: <StaffPage /> },
+          { path: '/campaigns', element: <CampaignsPage /> },
+        ],
       },
     ],
   },

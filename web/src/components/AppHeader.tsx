@@ -8,7 +8,9 @@ import { cn } from '@/lib/utils';
 const NAV: { to: string; label: string; roles: string[] }[] = [
   { to: '/dashboard', label: 'Dashboard', roles: ['*'] },
   { to: '/ngos', label: 'NGOs', roles: ['system_admin'] },
+  { to: '/disasters', label: 'Disasters', roles: ['system_admin'] },
   { to: '/staff', label: 'Staff', roles: ['ngo_admin'] },
+  { to: '/campaigns', label: 'Campaigns', roles: ['ngo_admin'] },
 ];
 
 export function AppHeader() {
