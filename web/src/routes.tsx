@@ -11,6 +11,7 @@ import { CoordinationPage } from '@/features/coordination/CoordinationPage';
 import { BeneficiariesPage } from '@/features/beneficiaries/BeneficiariesPage';
 import { InventoryPage } from '@/features/inventory/InventoryPage';
 import { TasksPage } from '@/features/tasks/TasksPage';
+import { ReportsPage } from '@/features/reports/ReportsPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -24,6 +25,12 @@ export const router = createBrowserRouter([
         // needs, ngo_admin posts offers). It is the first field_coordinator-facing screen.
         element: <RequireRole allow={['system_admin', 'ngo_admin', 'field_coordinator']} />,
         children: [{ path: '/coordination', element: <CoordinationPage /> }],
+      },
+      {
+        // Coordination Dashboard / 3W — the read-only command picture, gated by the same
+        // coordinator-facing roles that hold `reports:read` on the server.
+        element: <RequireRole allow={['system_admin', 'ngo_admin', 'field_coordinator']} />,
+        children: [{ path: '/reports', element: <ReportsPage /> }],
       },
       {
         // Beneficiaries — registrars (field_coordinator/volunteer/data_entry) register and

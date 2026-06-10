@@ -12,6 +12,7 @@ import matchesRoutes from './matches.routes';
 import beneficiaryRoutes from './beneficiary.routes';
 import inventoryRoutes from './inventory.routes';
 import tasksRoutes from './tasks.routes';
+import reportsRoutes from './reports.routes';
 
 const router = Router();
 
@@ -28,5 +29,6 @@ router.use('/matches', matchesRoutes);
 router.use('/beneficiaries', beneficiaryRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/tasks', tasksRoutes);
+router.use('/reports', reportsRoutes);
 
 export default router;

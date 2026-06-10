@@ -13,6 +13,7 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'audit:read',
     'board:read',
     'match:read',
+    'reports:read',
   ]),
   ngo_admin: new Set([
     'user:manage',
@@ -30,6 +31,7 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'match:propose',
     'match:confirm',
     'match:read',
+    'reports:read',
   ]),
   field_coordinator: new Set([
     'campaign:read',
@@ -44,6 +46,7 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'match:propose',
     'match:confirm',
     'match:read',
+    'reports:read',
   ]),
   volunteer: new Set(['task:execute', 'task:read', 'beneficiary:register', 'beneficiary:read']),
   data_entry: new Set(['beneficiary:register', 'beneficiary:read']),
