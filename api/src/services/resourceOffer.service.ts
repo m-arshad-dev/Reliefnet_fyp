@@ -24,7 +24,9 @@ export interface PublicOffer {
   updatedAt: string;
 }
 
-function toPublicOffer(row: ResourceOfferRow): PublicOffer {
+// Exported so the match service can project candidate offers without duplicating the
+// row → camelCase mapping (a candidate IS a shared offer + a couple of computed flags).
+export function toPublicOffer(row: ResourceOfferRow): PublicOffer {
   return {
     id: row.id,
     ngoId: row.ngo_id,

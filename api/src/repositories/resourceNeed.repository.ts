@@ -73,6 +73,58 @@ export async function insert(
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
+// Slice 4 — match-loop helpers. Both run INSIDE the match service's withTransaction so
+// they take the shared `client`. `findByIdForUpdate` SELECT ... FOR UPDATE locks the
+// need row for the duration of the transaction so a concurrent propose can't race two
+// matches onto the same need; `updateStatus` is the consequence move (open → matched →
+// fulfilling → fulfilled, or back to open on reject). Bare row — no ngos join needed.
+// ────────────────────────────────────────────────────────────────────────────────
+export interface NeedBareRow {
+  id: string;
+  ngo_id: string;
+  disaster_id: string;
+  type: string;
+  quantity: number;
+  location_id: string | null;
+  priority: string;
+  status: string;
+}
+
+const BARE_COLUMNS = `id, ngo_id, disaster_id, type, quantity, location_id, priority, status`;
+
+export async function findByIdForUpdate(
+  id: string,
+  client: PoolClient,
+): Promise<NeedBareRow | null> {
+  const { rows } = await client.query<NeedBareRow>(
+    `SELECT ${BARE_COLUMNS} FROM resource_needs WHERE id = $1 FOR UPDATE`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function updateStatus(
+  id: string,
+  status: string,
+  client: PoolClient,
+): Promise<void> {
+  await client.query(
+    `UPDATE resource_needs SET status = $2, updated_at = now() WHERE id = $1`,
+    [id, status],
+  );
+}
+
+// Plain (non-locking) read by id — used by the candidates endpoint to resolve a need's
+// disaster/type/region before suggesting offers. Cross-tenant readable like the board.
+export async function findById(id: string): Promise<NeedBareRow | null> {
+  const { rows } = await query<NeedBareRow>(
+    `SELECT ${BARE_COLUMNS} FROM resource_needs WHERE id = $1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
 // CROSS-TENANT READ — deliberately has NO `ngo_id` filter. This is the controlled
 // cross-tenant window of the Coordination Board: within one disaster, return open
 // needs raised by ALL NGOs. Kept as its OWN function (separate from any tenant-scoped

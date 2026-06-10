@@ -8,6 +8,7 @@ import disasterRoutes from './disaster.routes';
 import campaignRoutes from './campaign.routes';
 import needsRoutes from './needs.routes';
 import offersRoutes from './offers.routes';
+import matchesRoutes from './matches.routes';
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use('/disasters', disasterRoutes);
 router.use('/campaigns', campaignRoutes);
 router.use('/needs', needsRoutes);
 router.use('/offers', offersRoutes);
+router.use('/matches', matchesRoutes);
 
 export default router;

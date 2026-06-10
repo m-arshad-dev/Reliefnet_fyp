@@ -19,6 +19,10 @@ const STATUS_STYLES: Record<string, string> = {
   reserved: 'bg-amber-100 text-amber-800',
   committed: 'bg-indigo-100 text-indigo-800',
   delivered: 'bg-teal-100 text-teal-800',
+  // Matching Loop — match statuses
+  proposed: 'bg-sky-100 text-sky-800',
+  accepted: 'bg-indigo-100 text-indigo-800',
+  rejected: 'bg-red-100 text-red-800',
   // Coordination Board — need priorities
   low: 'bg-slate-100 text-slate-700',
   moderate: 'bg-sky-100 text-sky-800',

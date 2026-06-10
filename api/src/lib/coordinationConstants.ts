@@ -36,3 +36,14 @@ export const OFFER_STATUSES = [
   'closed',
 ] as const;
 export type OfferStatus = (typeof OFFER_STATUSES)[number];
+
+// Slice 4 Matching Loop — the match FSM's status vocabulary. The TRANSITIONS map and the
+// match→(need,offer) status mapping live in resourceMatch.service.ts (law 3); this is just
+// the enum both the Zod schemas and the service draw from.
+export const MATCH_STATUSES = ['proposed', 'accepted', 'rejected', 'fulfilled'] as const;
+export type MatchStatus = (typeof MATCH_STATUSES)[number];
+
+// Valid PATCH targets only — 'proposed' is the create-time entry state (set by POST
+// /matches), never a transition target.
+export const MATCH_TRANSITION_TARGETS = ['accepted', 'rejected', 'fulfilled'] as const;
+export type MatchTransitionTarget = (typeof MATCH_TRANSITION_TARGETS)[number];

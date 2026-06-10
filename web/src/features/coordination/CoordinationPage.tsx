@@ -15,6 +15,14 @@ import {
   type NeedPriority,
   type OfferVisibility,
 } from '@/lib/api/coordination';
+import {
+  listCandidates,
+  createMatch,
+  listMatches,
+  setMatchStatus,
+  type Match,
+  type MatchTransitionTarget,
+} from '@/lib/api/matches';
 import { listDisasters } from '@/lib/api/disasters';
 import { listLocations, buildLocationOptions } from '@/lib/api/locations';
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -45,13 +53,18 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // The Coordination Board — the project's first CROSS-TENANT screen. Scoped to one
 // disaster, it shows Open Needs and Available Offers raised by ALL NGOs (the server
 // reads across tenants on purpose). Writes stay tenant-owned: a field_coordinator's
-// "Raise a need" and an ngo_admin's "Post an offer" are created inside their own NGO
-// (the server forces ngo_id from the JWT — there is no NGO picker by design).
+// "Raise a need" and an ngo_admin's "Post an offer" are created inside their own NGO.
+//
+// Slice 4 adds the MATCHING LOOP: on an open need you own, "Find candidate offers"
+// surfaces shared offers from OTHER NGOs (suggest-only); confirming one proposes a match
+// that moves the need + offer in lockstep. The "Active matches" section drives that match
+// through accepted → fulfilled (or reject), with both NGOs seeing the linked status.
 export function CoordinationPage() {
-  const qc = useQueryClient();
   const { user } = useAuth();
   const isCoordinator = user?.role === 'field_coordinator';
   const isNgoAdmin = user?.role === 'ngo_admin';
+  const canMatch = isCoordinator || isNgoAdmin; // the two roles that drive matches
+  const userNgoId = user?.ngoId ?? null;
 
   // Shared board scope + filters.
   const [disasterId, setDisasterId] = useState('');
@@ -83,8 +96,16 @@ export function CoordinationPage() {
     queryFn: () => listOffers(boardParams),
     enabled: disasterId !== '',
   });
+  // Matches the caller's NGO participates in (either side), scoped to this disaster.
+  const matchesQuery = useQuery({
+    queryKey: ['matches', disasterId],
+    queryFn: () => listMatches({ disasterId }),
+    enabled: disasterId !== '' && canMatch,
+  });
+  const matches = matchesQuery.data?.items ?? [];
 
   // ── Raise-need form (field_coordinator) ──────────────────────────────────────────
+  const qc = useQueryClient();
   const [needType, setNeedType] = useState<ResourceType>('shelter');
   const [needQuantity, setNeedQuantity] = useState('');
   const [needLocationId, setNeedLocationId] = useState('');
@@ -438,6 +459,30 @@ export function CoordinationPage() {
               </Card>
             )}
 
+            {/* Active matches — the lifecycle once a need + offer are linked. Both NGOs see
+                a match they're part of; only the needing NGO sees the action buttons. */}
+            {canMatch && (
+              <section className="space-y-3">
+                <h2 className="text-lg font-semibold">Active matches</h2>
+                {matchesQuery.isLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading…</p>
+                ) : matchesQuery.isError ? (
+                  <p className="text-sm text-destructive">Failed to load matches.</p>
+                ) : matches.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No matches yet. Find candidate offers on one of your open needs below to
+                    propose one.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    {matches.map((m) => (
+                      <MatchCard key={m.id} match={m} userNgoId={userNgoId} regionName={regionName} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* Two columns: Open Needs / Available Offers — rows from ALL NGOs */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <section className="space-y-3">
@@ -451,7 +496,13 @@ export function CoordinationPage() {
                 ) : (
                   <div className="space-y-3">
                     {needsQuery.data!.items.map((need) => (
-                      <NeedCard key={need.id} need={need} regionName={regionName} />
+                      <NeedCard
+                        key={need.id}
+                        need={need}
+                        regionName={regionName}
+                        canMatch={canMatch}
+                        userNgoId={userNgoId}
+                      />
                     ))}
                   </div>
                 )}
@@ -481,13 +532,46 @@ export function CoordinationPage() {
   );
 }
 
+// Open-need card. For a need YOUR NGO owns (and you can match), it expands a cross-NGO
+// "candidate offers" panel and lets you propose a match (the human confirm). Proposing
+// moves the need off this Open column and into Active matches (status flips in lockstep).
 function NeedCard({
   need,
   regionName,
+  canMatch,
+  userNgoId,
 }: {
   need: ResourceNeed;
   regionName: (id: string | null) => string;
+  canMatch: boolean;
+  userNgoId: string | null;
 }) {
+  const qc = useQueryClient();
+  const owner = need.ngoId === userNgoId;
+  const canPropose = canMatch && owner && need.status === 'open';
+
+  const [showCandidates, setShowCandidates] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
+
+  const candidatesQuery = useQuery({
+    queryKey: ['candidates', need.id],
+    queryFn: () => listCandidates(need.id),
+    enabled: showCandidates,
+  });
+  const candidates = candidatesQuery.data?.items ?? [];
+
+  const proposeMutation = useMutation({
+    mutationFn: (offerId: string) => createMatch({ needId: need.id, offerId }),
+    onSuccess: () => {
+      setShowCandidates(false);
+      // Move both sides + surface the new match — all three queries refetch in lockstep.
+      qc.invalidateQueries({ queryKey: ['needs'] });
+      qc.invalidateQueries({ queryKey: ['offers'] });
+      qc.invalidateQueries({ queryKey: ['matches'] });
+    },
+    onError: (err) => setMatchError(errorMessage(err)),
+  });
+
   return (
     <div className="rounded-lg border bg-background p-4">
       <div className="flex items-start justify-between gap-2">
@@ -504,6 +588,166 @@ function NeedCard({
         Region: {regionName(need.locationId)} · Posted by{' '}
         <span className="font-medium text-foreground">{need.ngoName}</span>
       </div>
+
+      {canPropose && (
+        <div className="mt-3 border-t pt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setMatchError(null);
+              setShowCandidates((v) => !v);
+            }}
+          >
+            {showCandidates ? 'Hide candidate offers' : 'Find candidate offers'}
+          </Button>
+
+          {showCandidates && (
+            <div className="mt-3 space-y-2">
+              {candidatesQuery.isLoading ? (
+                <p className="text-sm text-muted-foreground">Searching other NGOs…</p>
+              ) : candidatesQuery.isError ? (
+                <p className="text-sm text-destructive">Failed to load candidates.</p>
+              ) : candidates.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No matching offers from other NGOs yet.
+                </p>
+              ) : (
+                candidates.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-2"
+                  >
+                    <div className="text-sm">
+                      <div className="font-medium">
+                        {c.quantity} × {capitalize(c.type)} ·{' '}
+                        <span className="font-normal text-muted-foreground">{c.ngoName}</span>
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                        <span>Region: {regionName(c.locationId)}</span>
+                        {c.sameRegion && (
+                          <span className="rounded bg-emerald-100 px-1.5 text-emerald-800">
+                            ✓ same region
+                          </span>
+                        )}
+                        {c.coversQuantity && (
+                          <span className="rounded bg-emerald-100 px-1.5 text-emerald-800">
+                            ✓ covers quantity
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={proposeMutation.isPending}
+                      onClick={() => {
+                        setMatchError(null);
+                        proposeMutation.mutate(c.id);
+                      }}
+                    >
+                      {proposeMutation.isPending ? 'Proposing…' : 'Propose match'}
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+          {matchError && <p className="mt-2 text-sm text-destructive">{matchError}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A confirmed match: NGO A's need ↔ NGO B's offer, with both sides' live statuses. Only
+// the NEEDING NGO drives the lifecycle (accept → fulfilled, or reject) — the offering NGO
+// sees the same card read-only. Every action moves the match + need + offer in lockstep.
+function MatchCard({
+  match,
+  userNgoId,
+  regionName,
+}: {
+  match: Match;
+  userNgoId: string | null;
+  regionName: (id: string | null) => string;
+}) {
+  const qc = useQueryClient();
+  const canManage = match.need.ngoId === userNgoId; // the needing NGO drives
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const statusMutation = useMutation({
+    mutationFn: (status: MatchTransitionTarget) => setMatchStatus(match.id, status),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['needs'] });
+      qc.invalidateQueries({ queryKey: ['offers'] });
+      qc.invalidateQueries({ queryKey: ['matches'] });
+    },
+    onError: (err) => setActionError(errorMessage(err)),
+  });
+
+  const isTerminal = match.status === 'fulfilled' || match.status === 'rejected';
+
+  function act(status: MatchTransitionTarget) {
+    setActionError(null);
+    statusMutation.mutate(status);
+  }
+
+  return (
+    <div className="rounded-lg border bg-background p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-medium">
+          {match.quantity} × {capitalize(match.need.type)}
+        </div>
+        <StatusBadge status={match.status} />
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-md bg-muted/40 p-2">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Need</div>
+          <div className="font-medium text-foreground">{match.need.ngoName}</div>
+          <div className="text-muted-foreground">Region: {regionName(match.need.locationId)}</div>
+          <div className="mt-1">
+            <StatusBadge status={match.need.status} />
+          </div>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Offer</div>
+          <div className="font-medium text-foreground">{match.offer.ngoName}</div>
+          <div className="text-muted-foreground">Region: {regionName(match.offer.locationId)}</div>
+          <div className="mt-1">
+            <StatusBadge status={match.offer.status} />
+          </div>
+        </div>
+      </div>
+
+      {canManage && !isTerminal && (
+        <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
+          {match.status === 'proposed' && (
+            <Button size="sm" disabled={statusMutation.isPending} onClick={() => act('accepted')}>
+              Accept
+            </Button>
+          )}
+          {match.status === 'accepted' && (
+            <Button size="sm" disabled={statusMutation.isPending} onClick={() => act('fulfilled')}>
+              Mark fulfilled
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={statusMutation.isPending}
+            onClick={() => act('rejected')}
+          >
+            Reject
+          </Button>
+        </div>
+      )}
+      {!canManage && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Driven by {match.need.ngoName} (the needing NGO).
+        </p>
+      )}
+      {actionError && <p className="mt-2 text-sm text-destructive">{actionError}</p>}
     </div>
   );
 }
