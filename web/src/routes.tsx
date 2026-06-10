@@ -8,6 +8,7 @@ import { StaffPage } from '@/features/users/StaffPage';
 import { DisastersPage } from '@/features/disasters/DisastersPage';
 import { CampaignsPage } from '@/features/campaigns/CampaignsPage';
 import { CoordinationPage } from '@/features/coordination/CoordinationPage';
+import { BeneficiariesPage } from '@/features/beneficiaries/BeneficiariesPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -21,6 +22,15 @@ export const router = createBrowserRouter([
         // needs, ngo_admin posts offers). It is the first field_coordinator-facing screen.
         element: <RequireRole allow={['system_admin', 'ngo_admin', 'field_coordinator']} />,
         children: [{ path: '/coordination', element: <CoordinationPage /> }],
+      },
+      {
+        // Beneficiaries — registrars (field_coordinator/volunteer/data_entry) register and
+        // see the duplicate flag; ngo_admin can view the tenant's registry. The web screen
+        // is thin; the full field flow is the mobile client (Slice 11).
+        element: (
+          <RequireRole allow={['ngo_admin', 'field_coordinator', 'volunteer', 'data_entry']} />
+        ),
+        children: [{ path: '/beneficiaries', element: <BeneficiariesPage /> }],
       },
       {
         element: <RequireRole allow={['system_admin']} />,

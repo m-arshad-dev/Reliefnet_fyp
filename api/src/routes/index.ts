@@ -9,6 +9,7 @@ import campaignRoutes from './campaign.routes';
 import needsRoutes from './needs.routes';
 import offersRoutes from './offers.routes';
 import matchesRoutes from './matches.routes';
+import beneficiaryRoutes from './beneficiary.routes';
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use('/campaigns', campaignRoutes);
 router.use('/needs', needsRoutes);
 router.use('/offers', offersRoutes);
 router.use('/matches', matchesRoutes);
+router.use('/beneficiaries', beneficiaryRoutes);
 
 export default router;

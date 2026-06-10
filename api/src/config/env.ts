@@ -10,6 +10,10 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(1, 'JWT_REFRESH_SECRET is required'),
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('7d'),
+  // Server-side secret peppering the beneficiary CNIC hash (Slice 5, v2 §4.4). A real
+  // deploy secret (Railway), never committed; required so a misconfigured server can
+  // never silently hash CNICs with an empty pepper.
+  CNIC_PEPPER: z.string().min(1, 'CNIC_PEPPER is required'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   PORT: z.coerce.number().int().positive().default(4000),
 });

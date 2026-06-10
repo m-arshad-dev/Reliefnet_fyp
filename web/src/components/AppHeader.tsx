@@ -8,6 +8,11 @@ import { cn } from '@/lib/utils';
 const NAV: { to: string; label: string; roles: string[] }[] = [
   { to: '/dashboard', label: 'Dashboard', roles: ['*'] },
   { to: '/coordination', label: 'Board', roles: ['system_admin', 'ngo_admin', 'field_coordinator'] },
+  {
+    to: '/beneficiaries',
+    label: 'Beneficiaries',
+    roles: ['ngo_admin', 'field_coordinator', 'volunteer', 'data_entry'],
+  },
   { to: '/ngos', label: 'NGOs', roles: ['system_admin'] },
   { to: '/disasters', label: 'Disasters', roles: ['system_admin'] },
   { to: '/staff', label: 'Staff', roles: ['ngo_admin'] },
