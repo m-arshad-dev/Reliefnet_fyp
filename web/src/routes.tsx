@@ -10,6 +10,7 @@ import { CampaignsPage } from '@/features/campaigns/CampaignsPage';
 import { CoordinationPage } from '@/features/coordination/CoordinationPage';
 import { BeneficiariesPage } from '@/features/beneficiaries/BeneficiariesPage';
 import { InventoryPage } from '@/features/inventory/InventoryPage';
+import { TasksPage } from '@/features/tasks/TasksPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -32,6 +33,12 @@ export const router = createBrowserRouter([
           <RequireRole allow={['ngo_admin', 'field_coordinator', 'volunteer', 'data_entry']} />
         ),
         children: [{ path: '/beneficiaries', element: <BeneficiariesPage /> }],
+      },
+      {
+        // Tasks — coordinators/admins create, assign and verify; volunteers execute
+        // (start / submit). The escalated queue (3+ rejections) shows only to the managers.
+        element: <RequireRole allow={['ngo_admin', 'field_coordinator', 'volunteer']} />,
+        children: [{ path: '/tasks', element: <TasksPage /> }],
       },
       {
         element: <RequireRole allow={['system_admin']} />,

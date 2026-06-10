@@ -13,6 +13,7 @@ const NAV: { to: string; label: string; roles: string[] }[] = [
     label: 'Beneficiaries',
     roles: ['ngo_admin', 'field_coordinator', 'volunteer', 'data_entry'],
   },
+  { to: '/tasks', label: 'Tasks', roles: ['ngo_admin', 'field_coordinator', 'volunteer'] },
   { to: '/ngos', label: 'NGOs', roles: ['system_admin'] },
   { to: '/disasters', label: 'Disasters', roles: ['system_admin'] },
   { to: '/staff', label: 'Staff', roles: ['ngo_admin'] },
