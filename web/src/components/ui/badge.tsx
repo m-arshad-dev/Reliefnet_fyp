@@ -23,6 +23,12 @@ const STATUS_STYLES: Record<string, string> = {
   proposed: 'bg-sky-100 text-sky-800',
   accepted: 'bg-indigo-100 text-indigo-800',
   rejected: 'bg-red-100 text-red-800',
+  // Inventory FSM — movement states
+  stock_in: 'bg-emerald-100 text-emerald-800',
+  allocated: 'bg-amber-100 text-amber-800',
+  dispatched: 'bg-sky-100 text-sky-800',
+  consumed: 'bg-slate-100 text-slate-700',
+  correction: 'bg-purple-100 text-purple-800',
   // Beneficiaries — verification state
   verified: 'bg-emerald-100 text-emerald-800',
   unverified: 'bg-slate-100 text-slate-700',

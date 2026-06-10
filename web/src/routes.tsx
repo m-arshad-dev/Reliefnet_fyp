@@ -9,6 +9,7 @@ import { DisastersPage } from '@/features/disasters/DisastersPage';
 import { CampaignsPage } from '@/features/campaigns/CampaignsPage';
 import { CoordinationPage } from '@/features/coordination/CoordinationPage';
 import { BeneficiariesPage } from '@/features/beneficiaries/BeneficiariesPage';
+import { InventoryPage } from '@/features/inventory/InventoryPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -44,6 +45,8 @@ export const router = createBrowserRouter([
         children: [
           { path: '/staff', element: <StaffPage /> },
           { path: '/campaigns', element: <CampaignsPage /> },
+          // Inventory is ngo_admin-only and private per NGO (no cross-tenant read seam).
+          { path: '/inventory', element: <InventoryPage /> },
         ],
       },
     ],

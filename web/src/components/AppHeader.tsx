@@ -17,6 +17,7 @@ const NAV: { to: string; label: string; roles: string[] }[] = [
   { to: '/disasters', label: 'Disasters', roles: ['system_admin'] },
   { to: '/staff', label: 'Staff', roles: ['ngo_admin'] },
   { to: '/campaigns', label: 'Campaigns', roles: ['ngo_admin'] },
+  { to: '/inventory', label: 'Inventory', roles: ['ngo_admin'] },
 ];
 
 export function AppHeader() {

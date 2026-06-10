@@ -10,6 +10,7 @@ import needsRoutes from './needs.routes';
 import offersRoutes from './offers.routes';
 import matchesRoutes from './matches.routes';
 import beneficiaryRoutes from './beneficiary.routes';
+import inventoryRoutes from './inventory.routes';
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.use('/needs', needsRoutes);
 router.use('/offers', offersRoutes);
 router.use('/matches', matchesRoutes);
 router.use('/beneficiaries', beneficiaryRoutes);
+router.use('/inventory', inventoryRoutes);
 
 export default router;
