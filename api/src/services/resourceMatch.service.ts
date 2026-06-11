@@ -4,6 +4,7 @@ import * as needRepo from '../repositories/resourceNeed.repository';
 import * as offerRepo from '../repositories/resourceOffer.repository';
 import { toPublicOffer, type PublicOffer } from './resourceOffer.service';
 import { withCrossTenant, withTenantShared } from '../db/pool';
+import * as auditService from './audit.service';
 import {
   ConflictError,
   NotFoundError,
@@ -208,6 +209,16 @@ export async function proposeMatch(
     await needRepo.updateStatus(need.id, effect.need, client);
     await offerRepo.updateStatus(offer.id, effect.offer, client);
 
+    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
+    await auditService.record(client, {
+      action: 'match.propose',
+      entityType: 'resource_match',
+      entityId: inserted.id,
+      metadata: { needId: need.id, offerId: offer.id, quantity },
+      actorId,
+      ngoId: tenantNgoId,
+    });
+
     // Re-hydrate AFTER the status moves so the response carries the fresh need/offer
     // statuses (matched/reserved), not the pre-update ones the insert's join captured.
     const hydrated = await matchRepo.findByIdHydrated(inserted.id, client);
@@ -252,6 +263,17 @@ export async function transitionMatch(
     // Stamp who confirmed only on the first human confirmation (the move to 'accepted').
     const confirmedBy = toStatus === 'accepted' ? actorId : null;
     const updated = await matchRepo.updateStatus(matchId, toStatus, confirmedBy, client);
+
+    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
+    await auditService.record(client, {
+      action: 'match.transition',
+      entityType: 'resource_match',
+      entityId: matchId,
+      metadata: { fromStatus: match.status, toStatus, needStatus: effect.need, offerStatus: effect.offer },
+      actorId,
+      ngoId: tenantNgoId,
+    });
+
     return toPublicMatch(updated);
   });
 }

@@ -20,6 +20,7 @@ const NAV: { to: string; label: string; roles: string[] }[] = [
   { to: '/staff', label: 'Staff', roles: ['ngo_admin'] },
   { to: '/campaigns', label: 'Campaigns', roles: ['ngo_admin'] },
   { to: '/inventory', label: 'Inventory', roles: ['ngo_admin'] },
+  { to: '/audit', label: 'Audit', roles: ['auditor', 'system_admin'] },
 ];
 
 export function AppHeader() {

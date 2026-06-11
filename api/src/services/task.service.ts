@@ -5,6 +5,7 @@ import type { TransitionRow } from '../repositories/taskTransition.repository';
 import * as campaignRepo from '../repositories/campaign.repository';
 import * as userRepo from '../repositories/user.repository';
 import { withTenant } from '../db/pool';
+import * as auditService from './audit.service';
 import { ForbiddenError, NotFoundError, ValidationError, isForeignKeyViolation } from '../lib/errors';
 import { hasPermission } from '../lib/permissions';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
@@ -164,6 +165,17 @@ export async function createTask(
         { taskId: task.id, fromStatus: null, toStatus: 'created', actorId, note: null },
         client,
       );
+
+      // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
+      await auditService.record(client, {
+        action: 'task.create',
+        entityType: 'task',
+        entityId: task.id,
+        metadata: { title: task.title, campaignId: input.campaignId, assignedTo },
+        actorId,
+        ngoId: tenantNgoId,
+      });
+
       return toPublicTask(task);
     });
   } catch (err) {
@@ -252,6 +264,24 @@ export async function transitionTask(
       },
       client,
     );
+
+    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). Records both what was
+    // REQUESTED and what was APPLIED (so a cap-redirected rejection is auditable).
+    await auditService.record(client, {
+      action: 'task.transition',
+      entityType: 'task',
+      entityId: taskId,
+      metadata: {
+        fromStatus: task.status,
+        appliedStatus,
+        requestedStatus: toStatus,
+        rejectionCount,
+        assignedTo,
+        note: input.note ?? null,
+      },
+      actorId: actor.id,
+      ngoId: tenantNgoId,
+    });
 
     return toPublicTask(updated);
   });

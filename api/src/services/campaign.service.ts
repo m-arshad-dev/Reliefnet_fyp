@@ -2,6 +2,7 @@ import * as campaignRepo from '../repositories/campaign.repository';
 import type { CampaignRow } from '../repositories/campaign.repository';
 import * as disasterRepo from '../repositories/disaster.repository';
 import { withTenant } from '../db/pool';
+import * as auditService from './audit.service';
 import { NotFoundError, ValidationError, isForeignKeyViolation } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 
@@ -67,8 +68,8 @@ export async function createCampaign(
   if (!disaster) throw new NotFoundError('Disaster not found');
 
   try {
-    const row = await withTenant(tenantNgoId, (client) =>
-      campaignRepo.insert(
+    const row = await withTenant(tenantNgoId, async (client) => {
+      const created = await campaignRepo.insert(
         {
           ngoId: tenantNgoId,
           disasterId: input.disasterId,
@@ -79,8 +80,18 @@ export async function createCampaign(
           createdBy: actorId,
         },
         client,
-      ),
-    );
+      );
+      // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
+      await auditService.record(client, {
+        action: 'campaign.create',
+        entityType: 'campaign',
+        entityId: created.id,
+        metadata: { disasterId: input.disasterId, name: input.name },
+        actorId,
+        ngoId: tenantNgoId,
+      });
+      return created;
+    });
     return toPublicCampaign(row);
   } catch (err) {
     if (isForeignKeyViolation(err)) {
@@ -106,6 +117,7 @@ export async function setCampaignStatus(
   id: string,
   status: 'active' | 'paused' | 'completed',
   tenantNgoId: string,
+  actorId: string,
 ): Promise<PublicCampaign> {
   return withTenant(tenantNgoId, async (client) => {
     const existing = await campaignRepo.findById(id, client);
@@ -125,6 +137,17 @@ export async function setCampaignStatus(
 
     const updated = await campaignRepo.updateStatus(id, status, client);
     if (!updated) throw new NotFoundError('Campaign not found');
+
+    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
+    await auditService.record(client, {
+      action: 'campaign.status',
+      entityType: 'campaign',
+      entityId: id,
+      metadata: { fromStatus: existing.status, toStatus: status },
+      actorId,
+      ngoId: tenantNgoId,
+    });
+
     return toPublicCampaign(updated);
   });
 }

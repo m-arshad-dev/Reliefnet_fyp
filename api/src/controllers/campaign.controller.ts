@@ -43,7 +43,7 @@ export const setStatus: RequestHandler = async (req, res, next) => {
     const ngoId = requireTenant(req);
     const { id } = req.params as { id: string };
     const { status } = req.body as { status: 'active' | 'paused' | 'completed' };
-    const data = await campaignService.setCampaignStatus(id, status, ngoId);
+    const data = await campaignService.setCampaignStatus(id, status, ngoId, req.user!.sub);
     res.status(200).json({ success: true, data, error: null });
   } catch (err) {
     next(err);

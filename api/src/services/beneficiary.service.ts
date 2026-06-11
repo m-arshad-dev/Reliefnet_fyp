@@ -4,6 +4,7 @@ import * as aidRecordRepo from '../repositories/aidRecord.repository';
 import type { PriorAidRow } from '../repositories/aidRecord.repository';
 import * as campaignRepo from '../repositories/campaign.repository';
 import { withTenant, withCrossTenant, withTenantShared } from '../db/pool';
+import * as auditService from './audit.service';
 import { ConflictError, NotFoundError } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 import { hashCnic, maskCnic } from '../lib/cnic';
@@ -131,6 +132,17 @@ export async function registerBeneficiary(
       client,
     );
 
+    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). NO CNIC/PII in metadata
+    // (the hash never leaves the server); just whether a cross-NGO duplicate was flagged.
+    await auditService.record(client, {
+      action: 'beneficiary.register',
+      entityType: 'beneficiary',
+      entityId: beneficiary.id,
+      metadata: { campaignId: input.campaignId, aidType: input.aidType, duplicateFlagged: prior.length > 0 },
+      actorId,
+      ngoId: tenantNgoId,
+    });
+
     return {
       beneficiary: toPublicBeneficiary(beneficiary),
       duplicateFlag: toDuplicateFlag(input.cnic, prior),
@@ -189,6 +201,17 @@ export async function verifyBeneficiary(
       throw new ConflictError('Beneficiary is already verified');
     }
     const updated = await beneficiaryRepo.setVerified(id, actorId, client);
+
+    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
+    await auditService.record(client, {
+      action: 'beneficiary.verify',
+      entityType: 'beneficiary',
+      entityId: id,
+      metadata: {},
+      actorId,
+      ngoId: tenantNgoId,
+    });
+
     return toPublicBeneficiary(updated);
   });
 }

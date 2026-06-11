@@ -12,6 +12,7 @@ import { BeneficiariesPage } from '@/features/beneficiaries/BeneficiariesPage';
 import { InventoryPage } from '@/features/inventory/InventoryPage';
 import { TasksPage } from '@/features/tasks/TasksPage';
 import { ReportsPage } from '@/features/reports/ReportsPage';
+import { AuditPage } from '@/features/audit/AuditPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -53,6 +54,13 @@ export const router = createBrowserRouter([
           { path: '/ngos', element: <NgosPage /> },
           { path: '/disasters', element: <DisastersPage /> },
         ],
+      },
+      {
+        // Audit ledger — oversight only: auditor + system_admin read the whole hash chain
+        // (v2 §3.2). The verify button recomputes chain integrity. ngo_admin is deliberately
+        // excluded (reads are never behind a write permission, and they get no audit:read).
+        element: <RequireRole allow={['auditor', 'system_admin']} />,
+        children: [{ path: '/audit', element: <AuditPage /> }],
       },
       {
         element: <RequireRole allow={['ngo_admin']} />,

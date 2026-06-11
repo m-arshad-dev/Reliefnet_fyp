@@ -2,6 +2,7 @@ import { withTransaction } from '../db/pool';
 import * as ngoRepo from '../repositories/ngo.repository';
 import type { NgoRow } from '../repositories/ngo.repository';
 import * as userRepo from '../repositories/user.repository';
+import * as auditService from './audit.service';
 import { hash } from '../lib/password';
 import {
   ConflictError,
@@ -46,6 +47,7 @@ interface RegisterNgoInput {
 // ngo row) and surface a 409.
 export async function registerNgo(
   input: RegisterNgoInput,
+  actorId: string,
 ): Promise<{ ngo: PublicNgo; admin: PublicUser }> {
   const passwordHash = await hash(input.admin.password);
   try {
@@ -64,6 +66,18 @@ export async function registerNgo(
         },
         client,
       );
+
+      // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). Attributed to the new
+      // NGO; actor is the onboarding system_admin.
+      await auditService.record(client, {
+        action: 'ngo.onboard',
+        entityType: 'ngo',
+        entityId: ngo.id,
+        metadata: { name: ngo.name, adminEmail: admin.email },
+        actorId,
+        ngoId: ngo.id,
+      });
+
       return { ngo, admin };
     });
     return { ngo: toPublicNgo(result.ngo), admin: toPublicUser(result.admin) };
@@ -111,7 +125,20 @@ export async function setNgoStatus(
     }
   }
 
-  const updated = await ngoRepo.updateStatus(id, status, actorId);
-  if (!updated) throw new NotFoundError('NGO not found');
+  // The status update AND its audit-ledger entry commit together (Slice 10, law 4). `ngos` is
+  // RLS-excluded, so the plain withTransaction (no tenant GUC) is the right helper here.
+  const updated = await withTransaction(async (client) => {
+    const row = await ngoRepo.updateStatus(id, status, actorId, client);
+    if (!row) throw new NotFoundError('NGO not found');
+    await auditService.record(client, {
+      action: 'ngo.vetting',
+      entityType: 'ngo',
+      entityId: id,
+      metadata: { fromStatus: existing.status, toStatus: status },
+      actorId,
+      ngoId: id,
+    });
+    return row;
+  });
   return toPublicNgo(updated);
 }

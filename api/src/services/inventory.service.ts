@@ -3,6 +3,7 @@ import type { ItemRow, ItemWithStockRow } from '../repositories/inventoryItem.re
 import * as movementRepo from '../repositories/stockMovement.repository';
 import type { MovementRow } from '../repositories/stockMovement.repository';
 import { withTenant } from '../db/pool';
+import * as auditService from './audit.service';
 import { ForbiddenError, NotFoundError, ValidationError } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 import type { MovementState } from '../lib/inventoryConstants';
@@ -225,6 +226,18 @@ export async function recordMovement(
       },
       client,
     );
+
+    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). The correction note
+    // lands in metadata, making it tamper-evident too (the slice DoD).
+    await auditService.record(client, {
+      action: 'inventory.move',
+      entityType: 'stock_movement',
+      entityId: inserted.id,
+      metadata: { toState, prevState, quantity, itemId: input.itemId, correctionNote },
+      actorId: actor.id,
+      ngoId: tenantNgoId,
+    });
+
     return toPublicMovement(inserted);
   });
 }

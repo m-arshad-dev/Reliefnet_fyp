@@ -64,17 +64,22 @@ export async function list(opts: { limit: number; cursor?: Keyset | null }): Pro
   return rows;
 }
 
+// Accepts an optional transaction client so vetting can update the status AND append its
+// audit-ledger entry inside one BEGIN/COMMIT (Slice 10, law 4). Without a client it runs on
+// the shared pool.
 export async function updateStatus(
   id: string,
   status: string,
   vettedBy: string,
+  client?: PoolClient,
 ): Promise<NgoRow | null> {
-  const { rows } = await query<NgoRow>(
-    `UPDATE ngos
+  const text = `UPDATE ngos
      SET status = $2, vetted_by = $3, updated_at = now()
      WHERE id = $1
-     RETURNING ${COLUMNS}`,
-    [id, status, vettedBy],
-  );
+     RETURNING ${COLUMNS}`;
+  const values = [id, status, vettedBy];
+  const { rows } = client
+    ? await client.query<NgoRow>(text, values)
+    : await query<NgoRow>(text, values);
   return rows[0] ?? null;
 }

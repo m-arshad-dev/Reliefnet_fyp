@@ -1,5 +1,7 @@
 import * as disasterRepo from '../repositories/disaster.repository';
 import type { DisasterRow } from '../repositories/disaster.repository';
+import { withTransaction } from '../db/pool';
+import * as auditService from './audit.service';
 import { NotFoundError, ValidationError, isForeignKeyViolation } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 
@@ -52,14 +54,30 @@ export async function createDisaster(
   actorId: string,
 ): Promise<PublicDisaster> {
   try {
-    const row = await disasterRepo.insert({
-      name: input.name,
-      type: input.type,
-      severity: input.severity,
-      regionId: input.regionId ?? null,
-      startsOn: input.startsOn,
-      endsOn: input.endsOn ?? null,
-      createdBy: actorId,
+    // The disaster insert AND its audit-ledger entry commit together (Slice 10, law 4).
+    // disaster_events is RLS-excluded (global), so the plain withTransaction is the right helper.
+    const row = await withTransaction(async (client) => {
+      const created = await disasterRepo.insert(
+        {
+          name: input.name,
+          type: input.type,
+          severity: input.severity,
+          regionId: input.regionId ?? null,
+          startsOn: input.startsOn,
+          endsOn: input.endsOn ?? null,
+          createdBy: actorId,
+        },
+        client,
+      );
+      await auditService.record(client, {
+        action: 'disaster.create',
+        entityType: 'disaster_event',
+        entityId: created.id,
+        metadata: { name: created.name, type: created.type, severity: created.severity },
+        actorId,
+        ngoId: null,
+      });
+      return created;
     });
     return toPublicDisaster(row);
   } catch (err) {

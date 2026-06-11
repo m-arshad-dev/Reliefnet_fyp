@@ -4,7 +4,7 @@ import * as ngoService from '../services/ngo.service';
 // Controllers only translate HTTP <-> service calls. No SQL, no business rules.
 export const register: RequestHandler = async (req, res, next) => {
   try {
-    const data = await ngoService.registerNgo(req.body);
+    const data = await ngoService.registerNgo(req.body, req.user!.sub);
     res.status(201).json({ success: true, data, error: null });
   } catch (err) {
     next(err);
