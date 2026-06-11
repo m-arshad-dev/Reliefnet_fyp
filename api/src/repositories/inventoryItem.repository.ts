@@ -79,6 +79,7 @@ function balanceCol(state: string, alias: string): string {
 export async function listByNgoWithStock(
   ngoId: string,
   opts: { limit: number; cursor?: Keyset | null },
+  client?: PoolClient,
 ): Promise<ItemWithStockRow[]> {
   const { limit, cursor } = opts;
   const conditions: string[] = ['i.ngo_id = $1'];
@@ -97,8 +98,7 @@ export async function listByNgoWithStock(
                     - COALESCE(SUM(CASE WHEN m.prev_state = 'stock_in' THEN m.quantity END), 0)
                     + COALESCE(SUM(CASE WHEN m.state = 'correction' THEN m.quantity END), 0))::float8 AS in_stock`;
 
-  const { rows } = await query<ItemWithStockRow>(
-    `SELECT i.id, i.ngo_id, i.name, i.unit, i.created_at, i.updated_at,
+  const text = `SELECT i.id, i.ngo_id, i.name, i.unit, i.created_at, i.updated_at,
             ${inStock},
             ${balanceCol('allocated', 'allocated')},
             ${balanceCol('dispatched', 'dispatched')},
@@ -109,8 +109,9 @@ export async function listByNgoWithStock(
      WHERE ${conditions.join(' AND ')}
      GROUP BY i.id
      ORDER BY i.created_at DESC, i.id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<ItemWithStockRow>(text, values)
+    : await query<ItemWithStockRow>(text, values);
   return rows;
 }

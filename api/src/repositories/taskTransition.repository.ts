@@ -50,6 +50,7 @@ export async function insert(
 export async function listByTask(
   taskId: string,
   opts: { limit: number; cursor?: Keyset | null },
+  client?: PoolClient,
 ): Promise<TransitionRow[]> {
   const { limit, cursor } = opts;
   const conditions: string[] = ['task_id = $1'];
@@ -64,12 +65,12 @@ export async function listByTask(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<TransitionRow>(
-    `SELECT ${COLUMNS} FROM task_transitions
+  const text = `SELECT ${COLUMNS} FROM task_transitions
      WHERE ${conditions.join(' AND ')}
      ORDER BY created_at DESC, id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<TransitionRow>(text, values)
+    : await query<TransitionRow>(text, values);
   return rows;
 }

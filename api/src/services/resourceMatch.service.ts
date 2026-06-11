@@ -3,7 +3,7 @@ import type { MatchRow } from '../repositories/resourceMatch.repository';
 import * as needRepo from '../repositories/resourceNeed.repository';
 import * as offerRepo from '../repositories/resourceOffer.repository';
 import { toPublicOffer, type PublicOffer } from './resourceOffer.service';
-import { withTransaction } from '../db/pool';
+import { withCrossTenant, withTenantShared } from '../db/pool';
 import {
   ConflictError,
   NotFoundError,
@@ -112,15 +112,21 @@ export async function getCandidates(
   needId: string,
   opts: { locationId?: string; limit?: number; cursor?: string },
 ): Promise<Page<PublicCandidate>> {
-  const need = await needRepo.findById(needId);
-  if (!need) throw new NotFoundError('Need not found');
-
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await offerRepo.findCandidateOffersForNeed(
-    { disasterId: need.disaster_id, type: need.type, ngoId: need.ngo_id },
-    { locationId: opts.locationId, limit, cursor },
-  );
+
+  // Pure cross-tenant suggestion: resolve the need (board_read) then the other NGOs' shared
+  // offers (shared_read) in one cross-tenant txn — no tenant id, the flag grants the reads.
+  const { need, rows } = await withCrossTenant(async (client) => {
+    const found = await needRepo.findById(needId, client);
+    if (!found) throw new NotFoundError('Need not found');
+    const offers = await offerRepo.findCandidateOffersForNeed(
+      { disasterId: found.disaster_id, type: found.type, ngoId: found.ngo_id },
+      { locationId: opts.locationId, limit, cursor },
+      client,
+    );
+    return { need: found, rows: offers };
+  });
 
   return buildPage(rows, limit, (row) => {
     const offer = toPublicOffer(row);
@@ -150,7 +156,10 @@ export async function proposeMatch(
   input: ProposeMatchInput,
   actorId: string,
 ): Promise<PublicMatch> {
-  return withTransaction(async (client) => {
+  // withTenantShared: tenant GUC scopes our own need (tenant_rw) and the match insert
+  // (WITH CHECK needing-side); the cross_tenant flag opens the counterparty's SHARED offer
+  // for both the FOR UPDATE lock and the status write (shared_read + shared_match_write).
+  return withTenantShared(tenantNgoId, async (client) => {
     const need = await needRepo.findByIdForUpdate(input.needId, client);
     if (!need || need.ngo_id !== tenantNgoId) {
       throw new NotFoundError('Need not found');
@@ -216,7 +225,9 @@ export async function transitionMatch(
   toStatus: MatchTransitionTarget,
   actorId: string,
 ): Promise<PublicMatch> {
-  return withTransaction(async (client) => {
+  // Same dual-GUC seam as proposeMatch: own need (tenant_rw) + counterparty shared offer
+  // (shared_match_write) move in lockstep; the match row resolves via either-parent tenant_rw.
+  return withTenantShared(tenantNgoId, async (client) => {
     const match = await matchRepo.findByIdForUpdate(matchId, client);
     if (!match) throw new NotFoundError('Match not found');
 
@@ -252,12 +263,15 @@ export async function listMatches(
 ): Promise<Page<PublicMatch>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await matchRepo.listInvolvingNgo(tenantNgoId, {
-    disasterId: opts.disasterId,
-    needId: opts.needId,
-    status: opts.status,
-    limit,
-    cursor,
-  });
+  // withTenantShared: the app-layer filter (rn.ngo_id=$1 OR ro.ngo_id=$1) scopes to matches
+  // we're part of, but each row's INNER JOINs reach the COUNTERPARTY's need/offer — the
+  // cross_tenant flag (board_read + shared_read) lets those JOINs resolve so both sides see it.
+  const rows = await withTenantShared(tenantNgoId, (client) =>
+    matchRepo.listInvolvingNgo(
+      tenantNgoId,
+      { disasterId: opts.disasterId, needId: opts.needId, status: opts.status, limit, cursor },
+      client,
+    ),
+  );
   return buildPage(rows, limit, toPublicMatch);
 }

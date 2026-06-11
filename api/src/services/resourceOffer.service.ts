@@ -1,6 +1,7 @@
 import * as offerRepo from '../repositories/resourceOffer.repository';
 import type { ResourceOfferRow } from '../repositories/resourceOffer.repository';
 import * as disasterRepo from '../repositories/disaster.repository';
+import { withTenant, withCrossTenant } from '../db/pool';
 import { NotFoundError, ValidationError, isForeignKeyViolation } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 
@@ -70,18 +71,23 @@ export async function createOffer(
   if (!disaster) throw new NotFoundError('Disaster not found');
 
   try {
-    const row = await offerRepo.insert({
-      ngoId: tenantNgoId,
-      disasterId: input.disasterId,
-      type: input.type,
-      quantity: input.quantity,
-      locationId: input.locationId ?? null,
-      availableFrom: input.availableFrom ?? null,
-      availableUntil: input.availableUntil ?? null,
-      visibility: input.visibility ?? 'shared',
-      description: input.description ?? null,
-      createdBy: actorId,
-    });
+    const row = await withTenant(tenantNgoId, (client) =>
+      offerRepo.insert(
+        {
+          ngoId: tenantNgoId,
+          disasterId: input.disasterId,
+          type: input.type,
+          quantity: input.quantity,
+          locationId: input.locationId ?? null,
+          availableFrom: input.availableFrom ?? null,
+          availableUntil: input.availableUntil ?? null,
+          visibility: input.visibility ?? 'shared',
+          description: input.description ?? null,
+          createdBy: actorId,
+        },
+        client,
+      ),
+    );
     return toPublicOffer(row);
   } catch (err) {
     if (isForeignKeyViolation(err)) {
@@ -105,12 +111,12 @@ export async function listSharedOffers(opts: {
 }): Promise<Page<PublicOffer>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await offerRepo.listSharedOffersForDisaster(opts.disasterId, {
-    status: opts.status ?? 'available',
-    type: opts.type,
-    locationId: opts.locationId,
-    limit,
-    cursor,
-  });
+  const rows = await withCrossTenant((client) =>
+    offerRepo.listSharedOffersForDisaster(
+      opts.disasterId,
+      { status: opts.status ?? 'available', type: opts.type, locationId: opts.locationId, limit, cursor },
+      client,
+    ),
+  );
   return buildPage(rows, limit, toPublicOffer);
 }

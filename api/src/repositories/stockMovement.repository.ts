@@ -81,6 +81,7 @@ export async function availableInState(
 export async function listByItem(
   itemId: string,
   opts: { limit: number; cursor?: Keyset | null },
+  client?: PoolClient,
 ): Promise<MovementRow[]> {
   const { limit, cursor } = opts;
   const conditions: string[] = ['item_id = $1'];
@@ -95,12 +96,12 @@ export async function listByItem(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<MovementRow>(
-    `SELECT ${COLUMNS} FROM stock_movements
+  const text = `SELECT ${COLUMNS} FROM stock_movements
      WHERE ${conditions.join(' AND ')}
      ORDER BY created_at DESC, id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<MovementRow>(text, values)
+    : await query<MovementRow>(text, values);
   return rows;
 }

@@ -1,6 +1,7 @@
 import * as campaignRepo from '../repositories/campaign.repository';
 import type { CampaignRow } from '../repositories/campaign.repository';
 import * as disasterRepo from '../repositories/disaster.repository';
+import { withTenant } from '../db/pool';
 import { NotFoundError, ValidationError, isForeignKeyViolation } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 
@@ -66,15 +67,20 @@ export async function createCampaign(
   if (!disaster) throw new NotFoundError('Disaster not found');
 
   try {
-    const row = await campaignRepo.insert({
-      ngoId: tenantNgoId,
-      disasterId: input.disasterId,
-      name: input.name,
-      targetRegionId: input.targetRegionId ?? null,
-      startsOn: input.startsOn,
-      endsOn: input.endsOn ?? null,
-      createdBy: actorId,
-    });
+    const row = await withTenant(tenantNgoId, (client) =>
+      campaignRepo.insert(
+        {
+          ngoId: tenantNgoId,
+          disasterId: input.disasterId,
+          name: input.name,
+          targetRegionId: input.targetRegionId ?? null,
+          startsOn: input.startsOn,
+          endsOn: input.endsOn ?? null,
+          createdBy: actorId,
+        },
+        client,
+      ),
+    );
     return toPublicCampaign(row);
   } catch (err) {
     if (isForeignKeyViolation(err)) {
@@ -90,7 +96,9 @@ export async function listCampaigns(
 ): Promise<Page<PublicCampaign>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await campaignRepo.listByNgo(tenantNgoId, { limit, cursor, disasterId: opts.disasterId });
+  const rows = await withTenant(tenantNgoId, (client) =>
+    campaignRepo.listByNgo(tenantNgoId, { limit, cursor, disasterId: opts.disasterId }, client),
+  );
   return buildPage(rows, limit, toPublicCampaign);
 }
 
@@ -99,22 +107,24 @@ export async function setCampaignStatus(
   status: 'active' | 'paused' | 'completed',
   tenantNgoId: string,
 ): Promise<PublicCampaign> {
-  const existing = await campaignRepo.findById(id);
-  // 404 if missing OR not in the caller's tenant — never reveal another NGO's campaign.
-  if (!existing || existing.ngo_id !== tenantNgoId) {
-    throw new NotFoundError('Campaign not found');
-  }
-
-  if (existing.status !== status) {
-    const allowed = CAMPAIGN_STATUS_TRANSITIONS[existing.status] ?? [];
-    if (!allowed.includes(status)) {
-      throw new ValidationError(
-        `Cannot change campaign status from '${existing.status}' to '${status}'`,
-      );
+  return withTenant(tenantNgoId, async (client) => {
+    const existing = await campaignRepo.findById(id, client);
+    // 404 if missing OR not in the caller's tenant — never reveal another NGO's campaign.
+    if (!existing || existing.ngo_id !== tenantNgoId) {
+      throw new NotFoundError('Campaign not found');
     }
-  }
 
-  const updated = await campaignRepo.updateStatus(id, status);
-  if (!updated) throw new NotFoundError('Campaign not found');
-  return toPublicCampaign(updated);
+    if (existing.status !== status) {
+      const allowed = CAMPAIGN_STATUS_TRANSITIONS[existing.status] ?? [];
+      if (!allowed.includes(status)) {
+        throw new ValidationError(
+          `Cannot change campaign status from '${existing.status}' to '${status}'`,
+        );
+      }
+    }
+
+    const updated = await campaignRepo.updateStatus(id, status, client);
+    if (!updated) throw new NotFoundError('Campaign not found');
+    return toPublicCampaign(updated);
+  });
 }

@@ -115,12 +115,13 @@ export async function updateStatus(
 }
 
 // Plain (non-locking) read by id — used by the candidates endpoint to resolve a need's
-// disaster/type/region before suggesting offers. Cross-tenant readable like the board.
-export async function findById(id: string): Promise<NeedBareRow | null> {
-  const { rows } = await query<NeedBareRow>(
-    `SELECT ${BARE_COLUMNS} FROM resource_needs WHERE id = $1`,
-    [id],
-  );
+// disaster/type/region before suggesting offers. Cross-tenant readable like the board, so
+// it runs inside withCrossTenant and takes that txn `client` (board_read needs the GUC set).
+export async function findById(id: string, client?: PoolClient): Promise<NeedBareRow | null> {
+  const text = `SELECT ${BARE_COLUMNS} FROM resource_needs WHERE id = $1`;
+  const { rows } = client
+    ? await client.query<NeedBareRow>(text, [id])
+    : await query<NeedBareRow>(text, [id]);
   return rows[0] ?? null;
 }
 
@@ -134,6 +135,7 @@ export async function findById(id: string): Promise<NeedBareRow | null> {
 export async function listOpenNeedsForDisaster(
   disasterId: string,
   opts: { status: string; type?: string; locationId?: string; limit: number; cursor?: Keyset | null },
+  client?: PoolClient,
 ): Promise<ResourceNeedRow[]> {
   const { status, type, locationId, limit, cursor } = opts;
   const conditions: string[] = ['rn.disaster_id = $1', 'rn.status = $2'];
@@ -154,14 +156,14 @@ export async function listOpenNeedsForDisaster(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<ResourceNeedRow>(
-    `SELECT ${cols('rn', 'n')}
+  const text = `SELECT ${cols('rn', 'n')}
      FROM resource_needs rn
      JOIN ngos n ON n.id = rn.ngo_id
      WHERE ${conditions.join(' AND ')}
      ORDER BY rn.created_at DESC, rn.id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<ResourceNeedRow>(text, values)
+    : await query<ResourceNeedRow>(text, values);
   return rows;
 }

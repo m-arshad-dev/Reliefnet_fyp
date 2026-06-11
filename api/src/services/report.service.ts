@@ -1,12 +1,14 @@
 import * as reportRepo from '../repositories/report.repository';
 import * as disasterRepo from '../repositories/disaster.repository';
+import { withCrossTenant } from '../db/pool';
 import { NotFoundError } from '../lib/errors';
 
 // Slice 8 — read-only reporting. Each function validates the disaster exists first
 // (clean 404), then delegates to a CROSS-TENANT aggregate read in report.repository
-// and projects snake_case rows → camelCase client shapes. Nothing writes, so there is
-// no transaction here; the tenancy discipline lives in the repository (aggregate only,
-// no per-NGO rows). These return BOUNDED rollups (a region's location subtree;
+// and projects snake_case rows → camelCase client shapes. Slice 9: every aggregate now
+// runs inside withCrossTenant so FORCE RLS lets the cross-NGO carve-outs (board_read /
+// shared_read / cross_tenant_read) resolve — the disaster check reads disaster_events
+// (an RLS-excluded table) on the pool. These return BOUNDED rollups (a region's location subtree;
 // type×priority; NGO×location), not unbounded entity lists, so no keyset pagination
 // applies — the one unbounded list (open-needs detail) is the board's GET /needs.
 
@@ -42,7 +44,9 @@ function toCoverageLocation(row: reportRepo.CoverageRow): CoverageLocation {
 async function loadCoverage(disasterId: string): Promise<CoverageLocation[]> {
   const disaster = await disasterRepo.findById(disasterId);
   if (!disaster) throw new NotFoundError('Disaster not found');
-  const rows = await reportRepo.coverageByLocation(disasterId, disaster.region_id);
+  const rows = await withCrossTenant((client) =>
+    reportRepo.coverageByLocation(disasterId, disaster.region_id, client),
+  );
   return rows.map(toCoverageLocation);
 }
 
@@ -82,7 +86,7 @@ export async function getUnmatchedNeeds(disasterId: string): Promise<{
 }> {
   const disaster = await disasterRepo.findById(disasterId);
   if (!disaster) throw new NotFoundError('Disaster not found');
-  const rows = await reportRepo.unmatchedNeedsSummary(disasterId);
+  const rows = await withCrossTenant((client) => reportRepo.unmatchedNeedsSummary(disasterId, client));
   const byTypePriority = rows.map((r) => ({
     type: r.type,
     priority: r.priority,
@@ -114,7 +118,9 @@ export async function getResourceAvailability(
 ): Promise<{ summary: AvailabilityGroup[] }> {
   const disaster = await disasterRepo.findById(disasterId);
   if (!disaster) throw new NotFoundError('Disaster not found');
-  const rows = await reportRepo.resourceAvailabilitySummary(disasterId);
+  const rows = await withCrossTenant((client) =>
+    reportRepo.resourceAvailabilitySummary(disasterId, client),
+  );
   const summary = rows.map((r) => ({
     type: r.type,
     locationId: r.location_id,
@@ -139,7 +145,7 @@ export interface ThreeWCell {
 export async function get3WMatrix(disasterId: string): Promise<{ cells: ThreeWCell[] }> {
   const disaster = await disasterRepo.findById(disasterId);
   if (!disaster) throw new NotFoundError('Disaster not found');
-  const rows = await reportRepo.threeWMatrix(disasterId);
+  const rows = await withCrossTenant((client) => reportRepo.threeWMatrix(disasterId, client));
   const cells = rows.map((r) => ({
     ngoId: r.ngo_id,
     ngoName: r.ngo_name,

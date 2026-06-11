@@ -87,6 +87,16 @@ const CNIC4 = cnicHash('37405-4444444-4');
 async function seed(client: PoolClient): Promise<void> {
   const passwordHash = await bcrypt.hash('Demo123!', 10);
 
+  // Slice 9 — under FORCE RLS the tenant tables (campaigns, resource_needs, resource_offers,
+  // resource_matches, beneficiaries, aid_records) only accept INSERTs whose ngo_id matches
+  // app.current_ngo_id (tenant_rw WITH CHECK). There is no cross-tenant WRITE policy by design,
+  // so each statement must target a SINGLE NGO — the previously-mixed multi-row inserts are
+  // split per NGO. `set_config(..., true)` is transaction-local and persists for the rest of
+  // this seed txn until changed. The excluded tables (ngos, users, locations, disaster_events)
+  // have no RLS, so steps 1–4 below need no GUC.
+  const setNgo = (ngoId: string): Promise<unknown> =>
+    client.query("SELECT set_config('app.current_ngo_id', $1, true)", [ngoId]);
+
   // created_by for the disaster: the seeded system_admin (falls back to NGO-A admin).
   const { rows: adminRows } = await client.query<{ id: string }>(
     `SELECT id FROM users WHERE role = 'system_admin' ORDER BY created_at ASC LIMIT 1`,
@@ -132,72 +142,108 @@ async function seed(client: PoolClient): Promise<void> {
     [systemAdminId],
   );
 
-  // 5. Campaigns (one per NGO, nested under the disaster)
+  // 5. Campaigns (one per NGO, nested under the disaster). Split per NGO for RLS WITH CHECK.
+  await setNgo(NGO_A);
   await client.query(
     `INSERT INTO campaigns (id, ngo_id, disaster_id, name, target_region_id, starts_on, status, created_by) VALUES
-       ('${C_A}', '${NGO_A}', '${D1}', 'Hope Lahore Flood Response',     '${LAHORE_CITY}', CURRENT_DATE, 'active', '${NA_ADMIN}'),
+       ('${C_A}', '${NGO_A}', '${D1}', 'Hope Lahore Flood Response', '${LAHORE_CITY}', CURRENT_DATE, 'active', '${NA_ADMIN}')
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await setNgo(NGO_B);
+  await client.query(
+    `INSERT INTO campaigns (id, ngo_id, disaster_id, name, target_region_id, starts_on, status, created_by) VALUES
        ('${C_B}', '${NGO_B}', '${D1}', 'Crescent Multan Flood Response', '${MULTAN_CITY}', CURRENT_DATE, 'active', '${NB_ADMIN}')
      ON CONFLICT (id) DO NOTHING`,
   );
 
-  // 6. Resource needs (mix of locations/types/priorities; N5 is pre-matched).
+  // 6. Resource needs (mix of locations/types/priorities; N5 is pre-matched). Split per NGO.
+  await setNgo(NGO_A);
   await client.query(
     `INSERT INTO resource_needs
        (id, ngo_id, disaster_id, type, quantity, location_id, priority, description, status, created_by) VALUES
-       ('${N1}', '${NGO_A}', '${D1}', 'shelter', 100, '${DV3}',         'critical', 'Family tents — camp flooded', 'open',    '${NA_COORD}'),
-       ('${N2}', '${NGO_B}', '${D1}', 'food',    500, '${MULTAN_CITY}', 'high',     'Dry ration packs',            'open',    '${NB_COORD}'),
-       ('${N3}', '${NGO_A}', '${D1}', 'water',   200, '${DV2}',         'moderate', 'Clean drinking water',        'open',    '${NA_COORD}'),
-       ('${N4}', '${NGO_B}', '${D1}', 'health',  50,  '${DV1}',         'high',     'Medical kits',                'open',    '${NB_COORD}'),
-       ('${N5}', '${NGO_A}', '${D1}', 'shelter', 80,  '${DV4}',         'moderate', 'Tarpaulin sheets (matched)',  'matched', '${NA_COORD}')
+       ('${N1}', '${NGO_A}', '${D1}', 'shelter', 100, '${DV3}', 'critical', 'Family tents — camp flooded', 'open',    '${NA_COORD}'),
+       ('${N3}', '${NGO_A}', '${D1}', 'water',   200, '${DV2}', 'moderate', 'Clean drinking water',        'open',    '${NA_COORD}'),
+       ('${N5}', '${NGO_A}', '${D1}', 'shelter', 80,  '${DV4}', 'moderate', 'Tarpaulin sheets (matched)',  'matched', '${NA_COORD}')
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await setNgo(NGO_B);
+  await client.query(
+    `INSERT INTO resource_needs
+       (id, ngo_id, disaster_id, type, quantity, location_id, priority, description, status, created_by) VALUES
+       ('${N2}', '${NGO_B}', '${D1}', 'food',   500, '${MULTAN_CITY}', 'high', 'Dry ration packs', 'open', '${NB_COORD}'),
+       ('${N4}', '${NGO_B}', '${D1}', 'health', 50,  '${DV1}',         'high', 'Medical kits',     'open', '${NB_COORD}')
      ON CONFLICT (id) DO NOTHING`,
   );
 
   // 7. Resource offers (shared/available, except O5 reserved by the match). Two NGOs both
-  //    offer shelter at Shadara Camp → availability shows "2 NGOs have surplus".
+  //    offer shelter at Shadara Camp → availability shows "2 NGOs have surplus". Split per NGO.
+  await setNgo(NGO_A);
   await client.query(
     `INSERT INTO resource_offers
        (id, ngo_id, disaster_id, type, quantity, location_id, visibility, description, status, created_by) VALUES
-       ('${O1}', '${NGO_B}', '${D1}', 'shelter', 120, '${DV1}',         'shared', 'Spare family tents',    'available', '${NB_ADMIN}'),
-       ('${O2}', '${NGO_A}', '${D1}', 'shelter', 60,  '${DV1}',         'shared', 'Winterized tents',      'available', '${NA_ADMIN}'),
-       ('${O3}', '${NGO_B}', '${D1}', 'food',    300, '${MULTAN_CITY}', 'shared', 'Ration packs surplus',  'available', '${NB_ADMIN}'),
-       ('${O4}', '${NGO_A}', '${D1}', 'water',   50,  '${MULTAN_CITY}', 'shared', 'Bottled water pallets', 'available', '${NA_ADMIN}'),
-       ('${O5}', '${NGO_B}', '${D1}', 'shelter', 90,  '${DV4}',         'shared', 'Tarpaulins (reserved)', 'reserved',  '${NB_ADMIN}')
+       ('${O2}', '${NGO_A}', '${D1}', 'shelter', 60, '${DV1}',         'shared', 'Winterized tents',      'available', '${NA_ADMIN}'),
+       ('${O4}', '${NGO_A}', '${D1}', 'water',   50, '${MULTAN_CITY}', 'shared', 'Bottled water pallets', 'available', '${NA_ADMIN}')
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await setNgo(NGO_B);
+  await client.query(
+    `INSERT INTO resource_offers
+       (id, ngo_id, disaster_id, type, quantity, location_id, visibility, description, status, created_by) VALUES
+       ('${O1}', '${NGO_B}', '${D1}', 'shelter', 120, '${DV1}', 'shared', 'Spare family tents',    'available', '${NB_ADMIN}'),
+       ('${O3}', '${NGO_B}', '${D1}', 'food',    300, '${MULTAN_CITY}', 'shared', 'Ration packs surplus', 'available', '${NB_ADMIN}'),
+       ('${O5}', '${NGO_B}', '${D1}', 'shelter', 90,  '${DV4}', 'shared', 'Tarpaulins (reserved)', 'reserved',  '${NB_ADMIN}')
      ON CONFLICT (id) DO NOTHING`,
   );
 
-  // 8. One confirmed cross-NGO match (NGO-A need N5 ↔ NGO-B offer O5) so 3W "matches"
-  //    and the matched/unmatched split are non-trivial.
+  // 8. One confirmed cross-NGO match (NGO-A need N5 ↔ NGO-B offer O5) so 3W "matches" and the
+  //    matched/unmatched split are non-trivial. resource_matches WITH CHECK pins the NEEDING
+  //    side, so this runs under the needing NGO (A); O5's offer row was inserted by NGO B above.
+  await setNgo(NGO_A);
   await client.query(
     `INSERT INTO resource_matches (id, need_id, offer_id, quantity, status, created_by, confirmed_by)
      VALUES ('${M1}', '${N5}', '${O5}', 80, 'accepted', '${NA_COORD}', '${NB_ADMIN}')
      ON CONFLICT (id) DO NOTHING`,
   );
 
-  // 9. Beneficiaries (distinct people with household_size, at the small demo camps).
-  //    $1..$4 = CNIC hashes.
+  // 9. Beneficiaries (distinct people with household_size, at the small demo camps). Split per NGO.
+  await setNgo(NGO_A);
   await client.query(
     `INSERT INTO beneficiaries
        (id, ngo_id, cnic_hash, full_name, household_size, location_id, verified, registered_by) VALUES
        ('${B1}', '${NGO_A}', $1, 'Rukhsana Bibi',  6,  '${DV1}', true,  '${NA_COORD}'),
        ('${B2}', '${NGO_A}', $2, 'Imran Shah',     5,  '${DV1}', false, '${NA_COORD}'),
-       ('${B3}', '${NGO_B}', $3, 'Nasreen Akhtar', 8,  '${DV2}', false, '${NB_COORD}'),
-       ('${B4}', '${NGO_A}', $4, 'Ghulam Mustafa', 12, '${DV4}', true,  '${NA_COORD}')
+       ('${B4}', '${NGO_A}', $3, 'Ghulam Mustafa', 12, '${DV4}', true,  '${NA_COORD}')
      ON CONFLICT (id) DO NOTHING`,
-    [CNIC1, CNIC2, CNIC3, CNIC4],
+    [CNIC1, CNIC2, CNIC4],
+  );
+  await setNgo(NGO_B);
+  await client.query(
+    `INSERT INTO beneficiaries
+       (id, ngo_id, cnic_hash, full_name, household_size, location_id, verified, registered_by) VALUES
+       ('${B3}', '${NGO_B}', $1, 'Nasreen Akhtar', 8, '${DV2}', false, '${NB_COORD}')
+     ON CONFLICT (id) DO NOTHING`,
+    [CNIC3],
   );
 
   // 10. Aid records. B1 has TWO records (food + shelter) — the coverage query MUST count
   //     B1's household ONCE, not twice. Distinct-beneficiary people_reached at Shadara
-  //     (DV1) = 6 + 5 = 11 over census 80 = ~13.75%. $1..$4 = CNIC hashes.
+  //     (DV1) = 6 + 5 = 11 over census 80 = ~13.75%. Split per NGO (aid_records carry ngo_id).
+  await setNgo(NGO_A);
   await client.query(
     `INSERT INTO aid_records (id, beneficiary_id, cnic_hash, ngo_id, campaign_id, aid_type, recorded_by) VALUES
        ('2b000000-0000-4000-8000-000000000081', '${B1}', $1, '${NGO_A}', '${C_A}', 'food',    '${NA_COORD}'),
        ('2b000000-0000-4000-8000-000000000082', '${B1}', $1, '${NGO_A}', '${C_A}', 'shelter', '${NA_COORD}'),
        ('2b000000-0000-4000-8000-000000000083', '${B2}', $2, '${NGO_A}', '${C_A}', 'food',    '${NA_COORD}'),
-       ('2b000000-0000-4000-8000-000000000084', '${B3}', $3, '${NGO_B}', '${C_B}', 'food',    '${NB_COORD}'),
-       ('2b000000-0000-4000-8000-000000000085', '${B4}', $4, '${NGO_A}', '${C_A}', 'shelter', '${NA_COORD}')
+       ('2b000000-0000-4000-8000-000000000085', '${B4}', $3, '${NGO_A}', '${C_A}', 'shelter', '${NA_COORD}')
      ON CONFLICT (id) DO NOTHING`,
-    [CNIC1, CNIC2, CNIC3, CNIC4],
+    [CNIC1, CNIC2, CNIC4],
+  );
+  await setNgo(NGO_B);
+  await client.query(
+    `INSERT INTO aid_records (id, beneficiary_id, cnic_hash, ngo_id, campaign_id, aid_type, recorded_by) VALUES
+       ('2b000000-0000-4000-8000-000000000084', '${B3}', $1, '${NGO_B}', '${C_B}', 'food', '${NB_COORD}')
+     ON CONFLICT (id) DO NOTHING`,
+    [CNIC3],
   );
 }
 

@@ -4,7 +4,7 @@ import * as transitionRepo from '../repositories/taskTransition.repository';
 import type { TransitionRow } from '../repositories/taskTransition.repository';
 import * as campaignRepo from '../repositories/campaign.repository';
 import * as userRepo from '../repositories/user.repository';
-import { withTransaction } from '../db/pool';
+import { withTenant } from '../db/pool';
 import { ForbiddenError, NotFoundError, ValidationError, isForeignKeyViolation } from '../lib/errors';
 import { hasPermission } from '../lib/permissions';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
@@ -133,17 +133,20 @@ export async function createTask(
   input: CreateTaskInput,
   actorId: string,
 ): Promise<PublicTask> {
-  const campaign = await campaignRepo.findById(input.campaignId);
-  if (!campaign || campaign.ngo_id !== tenantNgoId) {
-    throw new NotFoundError('Campaign not found');
-  }
-
-  const assignedTo = input.assignedTo
-    ? await resolveAssignee(tenantNgoId, input.assignedTo)
-    : null;
-
   try {
-    return await withTransaction(async (client) => {
+    return await withTenant(tenantNgoId, async (client) => {
+      // The campaign read happens inside the tenant txn so RLS (tenant_rw) scopes it; the
+      // app-layer ngo_id guard stays as the second wall. resolveAssignee reads `users` (an
+      // RLS-excluded table) so it runs on the pool — unaffected by the tenant GUC.
+      const campaign = await campaignRepo.findById(input.campaignId, client);
+      if (!campaign || campaign.ngo_id !== tenantNgoId) {
+        throw new NotFoundError('Campaign not found');
+      }
+
+      const assignedTo = input.assignedTo
+        ? await resolveAssignee(tenantNgoId, input.assignedTo)
+        : null;
+
       const task = await taskRepo.insert(
         {
           ngoId: tenantNgoId,
@@ -190,7 +193,7 @@ export async function transitionTask(
   input: TransitionInput,
   actor: Actor,
 ): Promise<PublicTask> {
-  return withTransaction(async (client) => {
+  return withTenant(tenantNgoId, async (client) => {
     const task = await taskRepo.findByIdForUpdate(taskId, client);
     if (!task || task.ngo_id !== tenantNgoId) {
       throw new NotFoundError('Task not found');
@@ -262,12 +265,13 @@ export async function listTasks(
 ): Promise<Page<PublicTask>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await taskRepo.listByNgo(tenantNgoId, {
-    limit,
-    cursor,
-    status: opts.status,
-    assignedTo: opts.assignedTo,
-  });
+  const rows = await withTenant(tenantNgoId, (client) =>
+    taskRepo.listByNgo(
+      tenantNgoId,
+      { limit, cursor, status: opts.status, assignedTo: opts.assignedTo },
+      client,
+    ),
+  );
   return buildPage(rows, limit, toPublicTask);
 }
 
@@ -278,12 +282,14 @@ export async function getHistory(
   taskId: string,
   opts: { limit?: number; cursor?: string },
 ): Promise<Page<PublicTransition>> {
-  const task = await taskRepo.findById(taskId);
-  if (!task || task.ngo_id !== tenantNgoId) {
-    throw new NotFoundError('Task not found');
-  }
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await transitionRepo.listByTask(taskId, { limit, cursor });
-  return buildPage(rows, limit, toPublicTransition);
+  return withTenant(tenantNgoId, async (client) => {
+    const task = await taskRepo.findById(taskId, client);
+    if (!task || task.ngo_id !== tenantNgoId) {
+      throw new NotFoundError('Task not found');
+    }
+    const rows = await transitionRepo.listByTask(taskId, { limit, cursor }, client);
+    return buildPage(rows, limit, toPublicTransition);
+  });
 }

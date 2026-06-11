@@ -2,7 +2,7 @@ import * as itemRepo from '../repositories/inventoryItem.repository';
 import type { ItemRow, ItemWithStockRow } from '../repositories/inventoryItem.repository';
 import * as movementRepo from '../repositories/stockMovement.repository';
 import type { MovementRow } from '../repositories/stockMovement.repository';
-import { withTransaction } from '../db/pool';
+import { withTenant } from '../db/pool';
 import { ForbiddenError, NotFoundError, ValidationError } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 import type { MovementState } from '../lib/inventoryConstants';
@@ -106,7 +106,9 @@ export async function createItem(
   actorId: string,
 ): Promise<PublicItem> {
   void actorId; // recorded as moved_by once stock arrives; the item row itself has no actor
-  const row = await itemRepo.insert({ ngoId: tenantNgoId, name: input.name, unit: input.unit });
+  const row = await withTenant(tenantNgoId, (client) =>
+    itemRepo.insert({ ngoId: tenantNgoId, name: input.name, unit: input.unit }, client),
+  );
   return toFreshPublicItem(row);
 }
 
@@ -117,7 +119,9 @@ export async function listItems(
 ): Promise<Page<PublicItem>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await itemRepo.listByNgoWithStock(tenantNgoId, { limit, cursor });
+  const rows = await withTenant(tenantNgoId, (client) =>
+    itemRepo.listByNgoWithStock(tenantNgoId, { limit, cursor }, client),
+  );
   return buildPage(rows, limit, toPublicItem);
 }
 
@@ -144,7 +148,7 @@ export async function recordMovement(
   input: RecordMovementInput,
   actor: Actor,
 ): Promise<PublicMovement> {
-  return withTransaction(async (client) => {
+  return withTenant(tenantNgoId, async (client) => {
     const item = await itemRepo.findByIdForUpdate(input.itemId, client);
     if (!item || item.ngo_id !== tenantNgoId) {
       throw new NotFoundError('Inventory item not found');
@@ -232,12 +236,14 @@ export async function listMovements(
   itemId: string,
   opts: { limit?: number; cursor?: string },
 ): Promise<Page<PublicMovement>> {
-  const item = await itemRepo.findById(itemId);
-  if (!item || item.ngo_id !== tenantNgoId) {
-    throw new NotFoundError('Inventory item not found');
-  }
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await movementRepo.listByItem(itemId, { limit, cursor });
-  return buildPage(rows, limit, toPublicMovement);
+  return withTenant(tenantNgoId, async (client) => {
+    const item = await itemRepo.findById(itemId, client);
+    if (!item || item.ngo_id !== tenantNgoId) {
+      throw new NotFoundError('Inventory item not found');
+    }
+    const rows = await movementRepo.listByItem(itemId, { limit, cursor }, client);
+    return buildPage(rows, limit, toPublicMovement);
+  });
 }

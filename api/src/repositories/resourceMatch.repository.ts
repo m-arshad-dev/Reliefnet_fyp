@@ -149,6 +149,7 @@ export async function listInvolvingNgo(
     limit: number;
     cursor?: Keyset | null;
   },
+  client?: PoolClient,
 ): Promise<MatchRow[]> {
   const { disasterId, needId, status, limit, cursor } = opts;
   const conditions: string[] = ['(rn.ngo_id = $1 OR ro.ngo_id = $1)'];
@@ -173,12 +174,12 @@ export async function listInvolvingNgo(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<MatchRow>(
-    `SELECT ${SELECTED} FROM resource_matches m ${JOINS}
+  const text = `SELECT ${SELECTED} FROM resource_matches m ${JOINS}
      WHERE ${conditions.join(' AND ')}
      ORDER BY m.created_at DESC, m.id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<MatchRow>(text, values)
+    : await query<MatchRow>(text, values);
   return rows;
 }

@@ -3,7 +3,7 @@ import type { BeneficiaryRow } from '../repositories/beneficiary.repository';
 import * as aidRecordRepo from '../repositories/aidRecord.repository';
 import type { PriorAidRow } from '../repositories/aidRecord.repository';
 import * as campaignRepo from '../repositories/campaign.repository';
-import { withTransaction } from '../db/pool';
+import { withTenant, withCrossTenant, withTenantShared } from '../db/pool';
 import { ConflictError, NotFoundError } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 import { hashCnic, maskCnic } from '../lib/cnic';
@@ -89,17 +89,20 @@ export async function registerBeneficiary(
   input: RegisterBeneficiaryInput,
   actorId: string,
 ): Promise<RegisterBeneficiaryResult> {
-  // The aid_record nests under a campaign; it must belong to the caller's NGO (404
-  // otherwise — never write aid against another tenant's campaign). The FK is the
-  // integrity backstop if the campaign vanishes between this check and the insert.
-  const campaign = await campaignRepo.findById(input.campaignId);
-  if (!campaign || campaign.ngo_id !== tenantNgoId) {
-    throw new NotFoundError('Campaign not found');
-  }
-
   const cnicHash = hashCnic(input.cnic);
 
-  return withTransaction(async (client) => {
+  // withTenantShared sets BOTH GUCs: app.current_ngo_id (so our own campaign read + the two
+  // inserts pass tenant_rw) AND app.cross_tenant='on' (so the prior-aid hash read crosses the
+  // aid_records cross_tenant_read carve-out). One txn, so the flag-read + writes stay atomic.
+  return withTenantShared(tenantNgoId, async (client) => {
+    // The aid_record nests under a campaign; it must belong to the caller's NGO (404
+    // otherwise — never write aid against another tenant's campaign). The FK is the
+    // integrity backstop if the campaign vanishes between this check and the insert.
+    const campaign = await campaignRepo.findById(input.campaignId, client);
+    if (!campaign || campaign.ngo_id !== tenantNgoId) {
+      throw new NotFoundError('Campaign not found');
+    }
+
     // Read prior aid FIRST, before our own aid_record exists, so we never flag ourselves.
     const prior = await aidRecordRepo.findPriorAidByHash(cnicHash, client);
 
@@ -139,7 +142,9 @@ export async function registerBeneficiary(
 // registrar can preview the flag before saving. Same hash + prior-aid path as the real
 // create, just without the insert.
 export async function checkDuplicate(cnic: string): Promise<DuplicateFlag> {
-  const prior = await aidRecordRepo.findPriorAidByHash(hashCnic(cnic));
+  const prior = await withCrossTenant((client) =>
+    aidRecordRepo.findPriorAidByHash(hashCnic(cnic), client),
+  );
   return toDuplicateFlag(cnic, prior);
 }
 
@@ -147,7 +152,7 @@ export async function getBeneficiary(
   tenantNgoId: string,
   id: string,
 ): Promise<PublicBeneficiary> {
-  const row = await beneficiaryRepo.findById(id);
+  const row = await withTenant(tenantNgoId, (client) => beneficiaryRepo.findById(id, client));
   // 404 if missing OR not in the caller's tenant — never reveal another NGO's beneficiary.
   if (!row || row.ngo_id !== tenantNgoId) {
     throw new NotFoundError('Beneficiary not found');
@@ -161,11 +166,9 @@ export async function listBeneficiaries(
 ): Promise<Page<PublicBeneficiary>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await beneficiaryRepo.listByNgo(tenantNgoId, {
-    limit,
-    cursor,
-    verified: opts.verified,
-  });
+  const rows = await withTenant(tenantNgoId, (client) =>
+    beneficiaryRepo.listByNgo(tenantNgoId, { limit, cursor, verified: opts.verified }, client),
+  );
   return buildPage(rows, limit, toPublicBeneficiary);
 }
 
@@ -177,7 +180,7 @@ export async function verifyBeneficiary(
   id: string,
   actorId: string,
 ): Promise<PublicBeneficiary> {
-  return withTransaction(async (client) => {
+  return withTenant(tenantNgoId, async (client) => {
     const row = await beneficiaryRepo.findByIdForUpdate(id, client);
     if (!row || row.ngo_id !== tenantNgoId) {
       throw new NotFoundError('Beneficiary not found');

@@ -54,11 +54,11 @@ export async function insert(
   return rows[0];
 }
 
-export async function findById(id: string): Promise<CampaignRow | null> {
-  const { rows } = await query<CampaignRow>(
-    `SELECT ${COLUMNS} FROM campaigns WHERE id = $1`,
-    [id],
-  );
+export async function findById(id: string, client?: PoolClient): Promise<CampaignRow | null> {
+  const text = `SELECT ${COLUMNS} FROM campaigns WHERE id = $1`;
+  const { rows } = client
+    ? await client.query<CampaignRow>(text, [id])
+    : await query<CampaignRow>(text, [id]);
   return rows[0] ?? null;
 }
 
@@ -69,6 +69,7 @@ export async function findById(id: string): Promise<CampaignRow | null> {
 export async function listByNgo(
   ngoId: string,
   opts: { limit: number; cursor?: Keyset | null; disasterId?: string },
+  client?: PoolClient,
 ): Promise<CampaignRow[]> {
   const { limit, cursor, disasterId } = opts;
   const conditions: string[] = ['ngo_id = $1'];
@@ -85,23 +86,27 @@ export async function listByNgo(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<CampaignRow>(
-    `SELECT ${COLUMNS} FROM campaigns
+  const text = `SELECT ${COLUMNS} FROM campaigns
      WHERE ${conditions.join(' AND ')}
      ORDER BY created_at DESC, id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<CampaignRow>(text, values)
+    : await query<CampaignRow>(text, values);
   return rows;
 }
 
-export async function updateStatus(id: string, status: string): Promise<CampaignRow | null> {
-  const { rows } = await query<CampaignRow>(
-    `UPDATE campaigns
+export async function updateStatus(
+  id: string,
+  status: string,
+  client?: PoolClient,
+): Promise<CampaignRow | null> {
+  const text = `UPDATE campaigns
      SET status = $2, updated_at = now()
      WHERE id = $1
-     RETURNING ${COLUMNS}`,
-    [id, status],
-  );
+     RETURNING ${COLUMNS}`;
+  const { rows } = client
+    ? await client.query<CampaignRow>(text, [id, status])
+    : await query<CampaignRow>(text, [id, status]);
   return rows[0] ?? null;
 }

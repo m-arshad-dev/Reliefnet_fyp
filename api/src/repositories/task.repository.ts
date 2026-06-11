@@ -103,6 +103,7 @@ export async function update(
 export async function listByNgo(
   ngoId: string,
   opts: { limit: number; cursor?: Keyset | null; status?: string; assignedTo?: string },
+  client?: PoolClient,
 ): Promise<TaskRow[]> {
   const { limit, cursor, status, assignedTo } = opts;
   const conditions: string[] = ['ngo_id = $1'];
@@ -125,12 +126,12 @@ export async function listByNgo(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<TaskRow>(
-    `SELECT ${COLUMNS} FROM tasks
+  const text = `SELECT ${COLUMNS} FROM tasks
      WHERE ${conditions.join(' AND ')}
      ORDER BY created_at DESC, id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<TaskRow>(text, values)
+    : await query<TaskRow>(text, values);
   return rows;
 }

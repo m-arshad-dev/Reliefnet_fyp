@@ -1,6 +1,7 @@
 import * as needRepo from '../repositories/resourceNeed.repository';
 import type { ResourceNeedRow } from '../repositories/resourceNeed.repository';
 import * as disasterRepo from '../repositories/disaster.repository';
+import { withTenant, withCrossTenant } from '../db/pool';
 import { NotFoundError, ValidationError, isForeignKeyViolation } from '../lib/errors';
 import { buildPage, clampLimit, decodeCursor, type Page } from '../lib/pagination';
 
@@ -62,16 +63,21 @@ export async function createNeed(
   if (!disaster) throw new NotFoundError('Disaster not found');
 
   try {
-    const row = await needRepo.insert({
-      ngoId: tenantNgoId,
-      disasterId: input.disasterId,
-      type: input.type,
-      quantity: input.quantity,
-      locationId: input.locationId ?? null,
-      priority: input.priority ?? 'moderate',
-      description: input.description ?? null,
-      createdBy: actorId,
-    });
+    const row = await withTenant(tenantNgoId, (client) =>
+      needRepo.insert(
+        {
+          ngoId: tenantNgoId,
+          disasterId: input.disasterId,
+          type: input.type,
+          quantity: input.quantity,
+          locationId: input.locationId ?? null,
+          priority: input.priority ?? 'moderate',
+          description: input.description ?? null,
+          createdBy: actorId,
+        },
+        client,
+      ),
+    );
     return toPublicNeed(row);
   } catch (err) {
     if (isForeignKeyViolation(err)) {
@@ -94,12 +100,12 @@ export async function listOpenNeeds(opts: {
 }): Promise<Page<PublicNeed>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeCursor(opts.cursor);
-  const rows = await needRepo.listOpenNeedsForDisaster(opts.disasterId, {
-    status: opts.status ?? 'open',
-    type: opts.type,
-    locationId: opts.locationId,
-    limit,
-    cursor,
-  });
+  const rows = await withCrossTenant((client) =>
+    needRepo.listOpenNeedsForDisaster(
+      opts.disasterId,
+      { status: opts.status ?? 'open', type: opts.type, locationId: opts.locationId, limit, cursor },
+      client,
+    ),
+  );
   return buildPage(rows, limit, toPublicNeed);
 }

@@ -136,6 +136,7 @@ export async function updateStatus(
 export async function findCandidateOffersForNeed(
   need: { disasterId: string; type: string; ngoId: string },
   opts: { locationId?: string; limit: number; cursor?: Keyset | null },
+  client?: PoolClient,
 ): Promise<ResourceOfferRow[]> {
   const { locationId, limit, cursor } = opts;
   const conditions: string[] = [
@@ -158,15 +159,15 @@ export async function findCandidateOffersForNeed(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<ResourceOfferRow>(
-    `SELECT ${cols('ro', 'n')}
+  const text = `SELECT ${cols('ro', 'n')}
      FROM resource_offers ro
      JOIN ngos n ON n.id = ro.ngo_id
      WHERE ${conditions.join(' AND ')}
      ORDER BY ro.created_at DESC, ro.id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<ResourceOfferRow>(text, values)
+    : await query<ResourceOfferRow>(text, values);
   return rows;
 }
 
@@ -180,6 +181,7 @@ export async function findCandidateOffersForNeed(
 export async function listSharedOffersForDisaster(
   disasterId: string,
   opts: { status: string; type?: string; locationId?: string; limit: number; cursor?: Keyset | null },
+  client?: PoolClient,
 ): Promise<ResourceOfferRow[]> {
   const { status, type, locationId, limit, cursor } = opts;
   const conditions: string[] = [
@@ -204,14 +206,14 @@ export async function listSharedOffersForDisaster(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<ResourceOfferRow>(
-    `SELECT ${cols('ro', 'n')}
+  const text = `SELECT ${cols('ro', 'n')}
      FROM resource_offers ro
      JOIN ngos n ON n.id = ro.ngo_id
      WHERE ${conditions.join(' AND ')}
      ORDER BY ro.created_at DESC, ro.id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<ResourceOfferRow>(text, values)
+    : await query<ResourceOfferRow>(text, values);
   return rows;
 }

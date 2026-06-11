@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { query } from '../db/pool';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,10 +39,10 @@ export interface CoverageRow {
 export async function coverageByLocation(
   disasterId: string,
   regionId: string | null,
+  client?: PoolClient,
 ): Promise<CoverageRow[]> {
   if (!regionId) return [];
-  const { rows } = await query<CoverageRow>(
-    `WITH RECURSIVE subtree AS (
+  const text = `WITH RECURSIVE subtree AS (
        SELECT id, parent_id, name, level, census_population
        FROM locations WHERE id = $2
        UNION ALL
@@ -80,9 +81,10 @@ export async function coverageByLocation(
      FROM subtree s
      LEFT JOIN aid   a ON a.location_id = s.id
      LEFT JOIN needs n ON n.location_id = s.id
-     ORDER BY coverage_ratio ASC NULLS LAST, s.census_population DESC NULLS LAST`,
-    [disasterId, regionId],
-  );
+     ORDER BY coverage_ratio ASC NULLS LAST, s.census_population DESC NULLS LAST`;
+  const { rows } = client
+    ? await client.query<CoverageRow>(text, [disasterId, regionId])
+    : await query<CoverageRow>(text, [disasterId, regionId]);
   return rows;
 }
 
@@ -98,9 +100,11 @@ export interface UnmatchedNeedRow {
 // have no live match (no proposed/accepted resource_matches row). Needs are already
 // public on the coordination board, so aggregating their quantities is fine — the
 // privacy boundary is on offer surplus (see resourceAvailabilitySummary), not demand.
-export async function unmatchedNeedsSummary(disasterId: string): Promise<UnmatchedNeedRow[]> {
-  const { rows } = await query<UnmatchedNeedRow>(
-    `SELECT rn.type, rn.priority,
+export async function unmatchedNeedsSummary(
+  disasterId: string,
+  client?: PoolClient,
+): Promise<UnmatchedNeedRow[]> {
+  const text = `SELECT rn.type, rn.priority,
             COUNT(*)::int AS need_count,
             COALESCE(SUM(rn.quantity), 0)::int AS total_quantity
      FROM resource_needs rn
@@ -110,9 +114,10 @@ export async function unmatchedNeedsSummary(disasterId: string): Promise<Unmatch
          WHERE m.need_id = rn.id AND m.status IN ('proposed', 'accepted')
        )
      GROUP BY rn.type, rn.priority
-     ORDER BY total_quantity DESC`,
-    [disasterId],
-  );
+     ORDER BY total_quantity DESC`;
+  const { rows } = client
+    ? await client.query<UnmatchedNeedRow>(text, [disasterId])
+    : await query<UnmatchedNeedRow>(text, [disasterId]);
   return rows;
 }
 
@@ -130,17 +135,20 @@ export interface AvailabilityRow {
 // ngo_id in the projection: "Tents: 2 NGOs have surplus in Lahore" is allowed,
 // "NGO-B has 340 tents" is NOT. visibility='shared' is pinned (private offers stay
 // with their owner) — mirrors the board's listSharedOffersForDisaster seam.
-export async function resourceAvailabilitySummary(disasterId: string): Promise<AvailabilityRow[]> {
-  const { rows } = await query<AvailabilityRow>(
-    `SELECT ro.type, ro.location_id, l.name AS location_name,
+export async function resourceAvailabilitySummary(
+  disasterId: string,
+  client?: PoolClient,
+): Promise<AvailabilityRow[]> {
+  const text = `SELECT ro.type, ro.location_id, l.name AS location_name,
             COUNT(DISTINCT ro.ngo_id)::int AS ngo_count
      FROM resource_offers ro
      LEFT JOIN locations l ON l.id = ro.location_id
      WHERE ro.disaster_id = $1 AND ro.visibility = 'shared' AND ro.status = 'available'
      GROUP BY ro.type, ro.location_id, l.name
-     ORDER BY ngo_count DESC`,
-    [disasterId],
-  );
+     ORDER BY ngo_count DESC`;
+  const { rows } = client
+    ? await client.query<AvailabilityRow>(text, [disasterId])
+    : await query<AvailabilityRow>(text, [disasterId]);
   return rows;
 }
 
@@ -162,9 +170,11 @@ export interface ThreeWRow {
 // Activity sources are UNION-ed then grouped per (ngo, location). Matches are attributed
 // to the NEEDING NGO's cell (the side receiving fulfilment). Counts only — no quantities,
 // no per-row detail — so this stays within the aggregate tenancy boundary.
-export async function threeWMatrix(disasterId: string): Promise<ThreeWRow[]> {
-  const { rows } = await query<ThreeWRow>(
-    `WITH activity AS (
+export async function threeWMatrix(
+  disasterId: string,
+  client?: PoolClient,
+): Promise<ThreeWRow[]> {
+  const text = `WITH activity AS (
        SELECT ngo_id, target_region_id AS location_id, 'campaign' AS kind
        FROM campaigns WHERE disaster_id = $1
        UNION ALL
@@ -187,8 +197,9 @@ export async function threeWMatrix(disasterId: string): Promise<ThreeWRow[]> {
      JOIN ngos n ON n.id = a.ngo_id
      LEFT JOIN locations l ON l.id = a.location_id
      GROUP BY a.ngo_id, n.name, a.location_id, l.name
-     ORDER BY n.name, l.name`,
-    [disasterId],
-  );
+     ORDER BY n.name, l.name`;
+  const { rows } = client
+    ? await client.query<ThreeWRow>(text, [disasterId])
+    : await query<ThreeWRow>(text, [disasterId]);
   return rows;
 }

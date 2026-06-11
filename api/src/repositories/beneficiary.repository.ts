@@ -101,6 +101,7 @@ export async function setVerified(
 export async function listByNgo(
   ngoId: string,
   opts: { limit: number; cursor?: Keyset | null; verified?: boolean },
+  client?: PoolClient,
 ): Promise<BeneficiaryRow[]> {
   const { limit, cursor, verified } = opts;
   const conditions: string[] = ['ngo_id = $1'];
@@ -117,12 +118,12 @@ export async function listByNgo(
   values.push(limit);
   const limitPos = values.length;
 
-  const { rows } = await query<BeneficiaryRow>(
-    `SELECT ${COLUMNS} FROM beneficiaries
+  const text = `SELECT ${COLUMNS} FROM beneficiaries
      WHERE ${conditions.join(' AND ')}
      ORDER BY created_at DESC, id DESC
-     LIMIT $${limitPos}`,
-    values,
-  );
+     LIMIT $${limitPos}`;
+  const { rows } = client
+    ? await client.query<BeneficiaryRow>(text, values)
+    : await query<BeneficiaryRow>(text, values);
   return rows;
 }
