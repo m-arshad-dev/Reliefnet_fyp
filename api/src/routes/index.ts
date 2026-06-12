@@ -14,6 +14,7 @@ import inventoryRoutes from './inventory.routes';
 import tasksRoutes from './tasks.routes';
 import reportsRoutes from './reports.routes';
 import auditRoutes from './audit.routes';
+import syncRoutes from './sync.routes';
 
 const router = Router();
 
@@ -32,5 +33,6 @@ router.use('/inventory', inventoryRoutes);
 router.use('/tasks', tasksRoutes);
 router.use('/reports', reportsRoutes);
 router.use('/audit', auditRoutes);
+router.use('/sync', syncRoutes);
 
 export default router;

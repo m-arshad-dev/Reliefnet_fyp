@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import * as taskRepo from '../repositories/task.repository';
 import type { TaskRow } from '../repositories/task.repository';
 import * as transitionRepo from '../repositories/taskTransition.repository';
@@ -61,7 +62,7 @@ export interface PublicTask {
   updatedAt: string;
 }
 
-function toPublicTask(row: TaskRow): PublicTask {
+export function toPublicTask(row: TaskRow): PublicTask {
   return {
     id: row.id,
     ngoId: row.ngo_id,
@@ -100,7 +101,7 @@ function toPublicTransition(row: TransitionRow): PublicTransition {
   };
 }
 
-interface Actor {
+export interface Actor {
   id: string;
   role: string;
 }
@@ -187,7 +188,7 @@ export async function createTask(
   }
 }
 
-interface TransitionInput {
+export interface TransitionInput {
   toStatus: TaskTransitionTarget;
   note?: string;
   assignedTo?: string;
@@ -205,86 +206,132 @@ export async function transitionTask(
   input: TransitionInput,
   actor: Actor,
 ): Promise<PublicTask> {
-  return withTenant(tenantNgoId, async (client) => {
-    const task = await taskRepo.findByIdForUpdate(taskId, client);
-    if (!task || task.ngo_id !== tenantNgoId) {
-      throw new NotFoundError('Task not found');
+  return withTenant(tenantNgoId, (client) => applyTransition(client, tenantNgoId, taskId, input, actor));
+}
+
+// The transition CRUX on the passed `client` — FOR UPDATE lock, FSM legality, per-edge auth,
+// assignee resolve, rejection cap → escalation, task UPDATE + history append + audit, all in the
+// caller's one transaction (laws 3 & 4). Split from withTenant (law 2) so the online PATCH path
+// (transitionTask, above) AND the Slice-12 offline-sync push share the exact same rules — a
+// replayed offline op moves through the identical FSM, cap, and ledger as a live transition. The
+// sync push compares the op's captured base status to the current status BEFORE calling this; if
+// they diverge it parks a conflict instead (human resolution on web), so by the time we're here
+// the base matched and this is a normal apply.
+export async function applyTransition(
+  client: PoolClient,
+  tenantNgoId: string,
+  taskId: string,
+  input: TransitionInput,
+  actor: Actor,
+): Promise<PublicTask> {
+  const task = await taskRepo.findByIdForUpdate(taskId, client);
+  if (!task || task.ngo_id !== tenantNgoId) {
+    throw new NotFoundError('Task not found');
+  }
+
+  const { toStatus } = input;
+
+  // 1) FSM legality — validate the REQUESTED transition (the cap redirect happens after).
+  const allowed = TASK_TRANSITIONS[task.status] ?? [];
+  if (!allowed.includes(toStatus)) {
+    throw new ValidationError(`Illegal task transition from '${task.status}' to '${toStatus}'`);
+  }
+
+  // 2) Per-edge authorization (business rule in the service, not the route).
+  const requiredPerm = EDGE_PERMISSIONS[`${task.status}->${toStatus}`];
+  if (!requiredPerm || !hasPermission(actor.role, requiredPerm)) {
+    throw new ForbiddenError('You do not have permission to perform this transition');
+  }
+
+  // 3) Resolve the assignee on assign edges only; other edges leave it untouched.
+  let assignedTo = task.assigned_to;
+  if (toStatus === 'assigned') {
+    if (input.assignedTo) {
+      assignedTo = await resolveAssignee(tenantNgoId, input.assignedTo);
     }
-
-    const { toStatus } = input;
-
-    // 1) FSM legality — validate the REQUESTED transition (the cap redirect happens after).
-    const allowed = TASK_TRANSITIONS[task.status] ?? [];
-    if (!allowed.includes(toStatus)) {
-      throw new ValidationError(`Illegal task transition from '${task.status}' to '${toStatus}'`);
+    if (!assignedTo) {
+      throw new ValidationError('An assignee is required to assign this task');
     }
+  }
 
-    // 2) Per-edge authorization (business rule in the service, not the route).
-    const requiredPerm = EDGE_PERMISSIONS[`${task.status}->${toStatus}`];
-    if (!requiredPerm || !hasPermission(actor.role, requiredPerm)) {
-      throw new ForbiddenError('You do not have permission to perform this transition');
-    }
+  // 4) Rejection cap — the slice's signature twist. The count increments on EVERY rejection
+  // and is never reset; when it reaches the cap the APPLIED status becomes 'escalated'
+  // instead of 'rejected' (so once at the cap, any further rejection re-escalates).
+  let appliedStatus: string = toStatus;
+  let rejectionCount = task.rejection_count;
+  if (toStatus === 'rejected') {
+    rejectionCount = task.rejection_count + 1;
+    appliedStatus = rejectionCount >= REJECTION_CAP ? 'escalated' : 'rejected';
+  }
 
-    // 3) Resolve the assignee on assign edges only; other edges leave it untouched.
-    let assignedTo = task.assigned_to;
-    if (toStatus === 'assigned') {
-      if (input.assignedTo) {
-        assignedTo = await resolveAssignee(tenantNgoId, input.assignedTo);
-      }
-      if (!assignedTo) {
-        throw new ValidationError('An assignee is required to assign this task');
-      }
-    }
+  const updated = await taskRepo.update(
+    taskId,
+    { status: appliedStatus, rejectionCount, assignedTo },
+    client,
+  );
 
-    // 4) Rejection cap — the slice's signature twist. The count increments on EVERY rejection
-    // and is never reset; when it reaches the cap the APPLIED status becomes 'escalated'
-    // instead of 'rejected' (so once at the cap, any further rejection re-escalates).
-    let appliedStatus: string = toStatus;
-    let rejectionCount = task.rejection_count;
-    if (toStatus === 'rejected') {
-      rejectionCount = task.rejection_count + 1;
-      appliedStatus = rejectionCount >= REJECTION_CAP ? 'escalated' : 'rejected';
-    }
-
-    const updated = await taskRepo.update(
+  // 5) Append the immutable history row — recording the APPLIED status (so a capped
+  // rejection shows ... -> 'escalated'), keeping the audit trail faithful.
+  await transitionRepo.insert(
+    {
       taskId,
-      { status: appliedStatus, rejectionCount, assignedTo },
-      client,
-    );
-
-    // 5) Append the immutable history row — recording the APPLIED status (so a capped
-    // rejection shows ... -> 'escalated'), keeping the audit trail faithful.
-    await transitionRepo.insert(
-      {
-        taskId,
-        fromStatus: task.status,
-        toStatus: appliedStatus,
-        actorId: actor.id,
-        note: input.note ?? null,
-      },
-      client,
-    );
-
-    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). Records both what was
-    // REQUESTED and what was APPLIED (so a cap-redirected rejection is auditable).
-    await auditService.record(client, {
-      action: 'task.transition',
-      entityType: 'task',
-      entityId: taskId,
-      metadata: {
-        fromStatus: task.status,
-        appliedStatus,
-        requestedStatus: toStatus,
-        rejectionCount,
-        assignedTo,
-        note: input.note ?? null,
-      },
+      fromStatus: task.status,
+      toStatus: appliedStatus,
       actorId: actor.id,
-      ngoId: tenantNgoId,
-    });
+      note: input.note ?? null,
+    },
+    client,
+  );
 
-    return toPublicTask(updated);
+  // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). Records both what was
+  // REQUESTED and what was APPLIED (so a cap-redirected rejection is auditable).
+  await auditService.record(client, {
+    action: 'task.transition',
+    entityType: 'task',
+    entityId: taskId,
+    metadata: {
+      fromStatus: task.status,
+      appliedStatus,
+      requestedStatus: toStatus,
+      rejectionCount,
+      assignedTo,
+      note: input.note ?? null,
+    },
+    actorId: actor.id,
+    ngoId: tenantNgoId,
   });
+
+  return toPublicTask(updated);
+}
+
+// Slice 12 — force-apply a transition a human chose on the web reconciliation screen
+// (keep_client / merge). DELIBERATELY bypasses the FSM legality + per-edge auth checks: a
+// coordinator has explicitly overridden a detected conflict, so we set the task to the chosen
+// status, append a history row (note tagged by the caller as a reconciliation), and return it.
+// rejection_count and assignee are left as-is. The audit row is written by the caller
+// (sync.service records sync.conflict.resolve). Runs on the caller's withTenant client.
+export async function applyResolvedTransition(
+  client: PoolClient,
+  tenantNgoId: string,
+  taskId: string,
+  toStatus: string,
+  actorId: string,
+  note: string | null,
+): Promise<PublicTask> {
+  const task = await taskRepo.findByIdForUpdate(taskId, client);
+  if (!task || task.ngo_id !== tenantNgoId) {
+    throw new NotFoundError('Task not found');
+  }
+  const updated = await taskRepo.update(
+    taskId,
+    { status: toStatus, rejectionCount: task.rejection_count, assignedTo: task.assigned_to },
+    client,
+  );
+  await transitionRepo.insert(
+    { taskId, fromStatus: task.status, toStatus, actorId, note },
+    client,
+  );
+  return toPublicTask(updated);
 }
 
 // GET /tasks?status=&assignedTo= — tenant-scoped keyset page. The escalated queue is just

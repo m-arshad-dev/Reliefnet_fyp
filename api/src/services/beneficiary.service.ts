@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import * as beneficiaryRepo from '../repositories/beneficiary.repository';
 import type { BeneficiaryRow } from '../repositories/beneficiary.repository';
 import * as aidRecordRepo from '../repositories/aidRecord.repository';
@@ -26,7 +27,7 @@ export interface PublicBeneficiary {
   updatedAt: string;
 }
 
-function toPublicBeneficiary(row: BeneficiaryRow): PublicBeneficiary {
+export function toPublicBeneficiary(row: BeneficiaryRow): PublicBeneficiary {
   return {
     id: row.id,
     ngoId: row.ngo_id,
@@ -64,7 +65,7 @@ function toDuplicateFlag(rawCnic: string, prior: PriorAidRow[]): DuplicateFlag {
   };
 }
 
-interface RegisterBeneficiaryInput {
+export interface RegisterBeneficiaryInput {
   cnic: string;
   fullName: string;
   householdSize?: number;
@@ -90,64 +91,77 @@ export async function registerBeneficiary(
   input: RegisterBeneficiaryInput,
   actorId: string,
 ): Promise<RegisterBeneficiaryResult> {
-  const cnicHash = hashCnic(input.cnic);
-
   // withTenantShared sets BOTH GUCs: app.current_ngo_id (so our own campaign read + the two
   // inserts pass tenant_rw) AND app.cross_tenant='on' (so the prior-aid hash read crosses the
   // aid_records cross_tenant_read carve-out). One txn, so the flag-read + writes stay atomic.
-  return withTenantShared(tenantNgoId, async (client) => {
-    // The aid_record nests under a campaign; it must belong to the caller's NGO (404
-    // otherwise — never write aid against another tenant's campaign). The FK is the
-    // integrity backstop if the campaign vanishes between this check and the insert.
-    const campaign = await campaignRepo.findById(input.campaignId, client);
-    if (!campaign || campaign.ngo_id !== tenantNgoId) {
-      throw new NotFoundError('Campaign not found');
-    }
+  return withTenantShared(tenantNgoId, (client) => applyRegister(client, tenantNgoId, input, actorId));
+}
 
-    // Read prior aid FIRST, before our own aid_record exists, so we never flag ourselves.
-    const prior = await aidRecordRepo.findPriorAidByHash(cnicHash, client);
+// The register CORE — the campaign check + cross-NGO prior-aid read + beneficiary insert +
+// aid_record insert + audit row, all on the passed `client`. Split from its transaction wrapper
+// (law 2: the business rule lives in ONE place) so BOTH the online controller path
+// (registerBeneficiary, above) AND the Slice-12 offline-sync push (sync.service replaying an
+// offline op) run the identical write inside their own withTenantShared txn — same RLS, same
+// dup-flag, same audit. The caller owns BEGIN/COMMIT and the GUCs.
+export async function applyRegister(
+  client: PoolClient,
+  tenantNgoId: string,
+  input: RegisterBeneficiaryInput,
+  actorId: string,
+): Promise<RegisterBeneficiaryResult> {
+  const cnicHash = hashCnic(input.cnic);
 
-    const beneficiary = await beneficiaryRepo.insert(
-      {
-        ngoId: tenantNgoId,
-        cnicHash,
-        fullName: input.fullName,
-        householdSize: input.householdSize ?? null,
-        locationId: input.locationId ?? null,
-        contactMasked: input.contactMasked ?? null,
-        registeredBy: actorId,
-      },
-      client,
-    );
+  // The aid_record nests under a campaign; it must belong to the caller's NGO (404
+  // otherwise — never write aid against another tenant's campaign). The FK is the
+  // integrity backstop if the campaign vanishes between this check and the insert.
+  const campaign = await campaignRepo.findById(input.campaignId, client);
+  if (!campaign || campaign.ngo_id !== tenantNgoId) {
+    throw new NotFoundError('Campaign not found');
+  }
 
-    await aidRecordRepo.insert(
-      {
-        beneficiaryId: beneficiary.id,
-        cnicHash,
-        ngoId: tenantNgoId,
-        campaignId: input.campaignId,
-        aidType: input.aidType,
-        recordedBy: actorId,
-      },
-      client,
-    );
+  // Read prior aid FIRST, before our own aid_record exists, so we never flag ourselves.
+  const prior = await aidRecordRepo.findPriorAidByHash(cnicHash, client);
 
-    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). NO CNIC/PII in metadata
-    // (the hash never leaves the server); just whether a cross-NGO duplicate was flagged.
-    await auditService.record(client, {
-      action: 'beneficiary.register',
-      entityType: 'beneficiary',
-      entityId: beneficiary.id,
-      metadata: { campaignId: input.campaignId, aidType: input.aidType, duplicateFlagged: prior.length > 0 },
-      actorId,
+  const beneficiary = await beneficiaryRepo.insert(
+    {
       ngoId: tenantNgoId,
-    });
+      cnicHash,
+      fullName: input.fullName,
+      householdSize: input.householdSize ?? null,
+      locationId: input.locationId ?? null,
+      contactMasked: input.contactMasked ?? null,
+      registeredBy: actorId,
+    },
+    client,
+  );
 
-    return {
-      beneficiary: toPublicBeneficiary(beneficiary),
-      duplicateFlag: toDuplicateFlag(input.cnic, prior),
-    };
+  await aidRecordRepo.insert(
+    {
+      beneficiaryId: beneficiary.id,
+      cnicHash,
+      ngoId: tenantNgoId,
+      campaignId: input.campaignId,
+      aidType: input.aidType,
+      recordedBy: actorId,
+    },
+    client,
+  );
+
+  // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4). NO CNIC/PII in metadata
+  // (the hash never leaves the server); just whether a cross-NGO duplicate was flagged.
+  await auditService.record(client, {
+    action: 'beneficiary.register',
+    entityType: 'beneficiary',
+    entityId: beneficiary.id,
+    metadata: { campaignId: input.campaignId, aidType: input.aidType, duplicateFlagged: prior.length > 0 },
+    actorId,
+    ngoId: tenantNgoId,
   });
+
+  return {
+    beneficiary: toPublicBeneficiary(beneficiary),
+    duplicateFlag: toDuplicateFlag(input.cnic, prior),
+  };
 }
 
 // Pre-check (POST /beneficiaries/check). Pure CROSS-NGO read — no tenant, no write — so a
@@ -192,26 +206,36 @@ export async function verifyBeneficiary(
   id: string,
   actorId: string,
 ): Promise<PublicBeneficiary> {
-  return withTenant(tenantNgoId, async (client) => {
-    const row = await beneficiaryRepo.findByIdForUpdate(id, client);
-    if (!row || row.ngo_id !== tenantNgoId) {
-      throw new NotFoundError('Beneficiary not found');
-    }
-    if (row.verified) {
-      throw new ConflictError('Beneficiary is already verified');
-    }
-    const updated = await beneficiaryRepo.setVerified(id, actorId, client);
+  return withTenant(tenantNgoId, (client) => applyVerify(client, tenantNgoId, id, actorId));
+}
 
-    // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
-    await auditService.record(client, {
-      action: 'beneficiary.verify',
-      entityType: 'beneficiary',
-      entityId: id,
-      metadata: {},
-      actorId,
-      ngoId: tenantNgoId,
-    });
+// The verify CORE on the passed `client` (FOR UPDATE lock + already-verified guard + flip +
+// audit). Split from withTenant so the online verify path AND the Slice-12 offline-sync push
+// share it (law 2). The caller owns the transaction + GUC.
+export async function applyVerify(
+  client: PoolClient,
+  tenantNgoId: string,
+  id: string,
+  actorId: string,
+): Promise<PublicBeneficiary> {
+  const row = await beneficiaryRepo.findByIdForUpdate(id, client);
+  if (!row || row.ngo_id !== tenantNgoId) {
+    throw new NotFoundError('Beneficiary not found');
+  }
+  if (row.verified) {
+    throw new ConflictError('Beneficiary is already verified');
+  }
+  const updated = await beneficiaryRepo.setVerified(id, actorId, client);
 
-    return toPublicBeneficiary(updated);
+  // Slice 10 — tamper-evident ledger entry in the SAME txn (law 4).
+  await auditService.record(client, {
+    action: 'beneficiary.verify',
+    entityType: 'beneficiary',
+    entityId: id,
+    metadata: {},
+    actorId,
+    ngoId: tenantNgoId,
   });
+
+  return toPublicBeneficiary(updated);
 }

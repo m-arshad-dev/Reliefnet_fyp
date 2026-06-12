@@ -32,6 +32,7 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'match:confirm',
     'match:read',
     'reports:read',
+    'sync:resolve',
   ]),
   field_coordinator: new Set([
     'campaign:read',
@@ -47,9 +48,19 @@ export const ROLE_PERMISSIONS: Record<string, Set<string>> = {
     'match:confirm',
     'match:read',
     'reports:read',
+    'sync:push',
+    'sync:pull',
+    'sync:resolve',
   ]),
-  volunteer: new Set(['task:execute', 'task:read', 'beneficiary:register', 'beneficiary:read']),
-  data_entry: new Set(['beneficiary:register', 'beneficiary:read']),
+  volunteer: new Set([
+    'task:execute',
+    'task:read',
+    'beneficiary:register',
+    'beneficiary:read',
+    'sync:push',
+    'sync:pull',
+  ]),
+  data_entry: new Set(['beneficiary:register', 'beneficiary:read', 'sync:push', 'sync:pull']),
   auditor: new Set(['audit:read', 'compliance:read']),
 };
 
