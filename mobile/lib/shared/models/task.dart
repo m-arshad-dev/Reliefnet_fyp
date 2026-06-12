@@ -114,6 +114,21 @@ bool canTransition(String role, String from, String to) {
 /// The assign edges (created/rejected/escalated -> assigned) carry an assignee.
 bool isAssignEdge(String to) => to == 'assigned';
 
+/// The server's rejection cap (api/src/services/task.service.ts REJECTION_CAP).
+const int kRejectionCap = 3;
+
+/// Predicts the status + rejection_count a transition will land in — mirroring the server FSM
+/// and the rejection-cap → escalation redirect — for the OPTIMISTIC offline write (Slice 12).
+/// The server stays authoritative: a later /sync/pull hydrates the canonical row and corrects any
+/// divergence; this just keeps the UI honest the instant the field user acts.
+({String status, int rejectionCount}) predictTransition(String to, int rejectionCount) {
+  if (to == 'rejected') {
+    final next = rejectionCount + 1;
+    return (status: next >= kRejectionCap ? 'escalated' : 'rejected', rejectionCount: next);
+  }
+  return (status: to, rejectionCount: rejectionCount);
+}
+
 /// Human label for an edge — 'assigned' is context-dependent (assign / reassign / reset).
 String actionLabel(String from, String to) {
   if (to == 'assigned') {

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/db/app_database.dart';
 import '../../core/network/api_exception.dart';
+import '../../core/sync/sync_service.dart';
 import '../../data/beneficiary_repository.dart';
 import '../../shared/models/beneficiary.dart';
 import '../../shared/models/user.dart';
@@ -96,10 +97,15 @@ class _BeneficiaryTileState extends ConsumerState<_BeneficiaryTile> {
   bool _verifying = false;
 
   Future<void> _verify() async {
+    final user = ref.read(authControllerProvider).user;
+    if (user == null) return;
     setState(() => _verifying = true);
     try {
-      await ref.read(beneficiaryRepositoryProvider).verify(widget.beneficiary.id);
+      // Offline-first: optimistic flip + queued verify op.
+      await ref.read(beneficiaryRepositoryProvider).verify(widget.beneficiary, actorId: user.id);
       ref.invalidate(beneficiaryListProvider);
+      final sync = await ref.read(syncServiceProvider).syncNow();
+      if (mounted && sync.reachedServer) ref.invalidate(beneficiaryListProvider);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));

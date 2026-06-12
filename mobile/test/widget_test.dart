@@ -46,4 +46,26 @@ void main() {
       expect(actionLabel('pending_verification', 'completed'), 'Mark complete');
     });
   });
+
+  // Slice 12 — the optimistic offline prediction must mirror the server FSM + rejection cap,
+  // so the cached row a field user sees matches what the server will apply on sync.
+  group('predictTransition (optimistic offline outcome)', () {
+    test('a normal edge keeps the count and lands on the target', () {
+      final r = predictTransition('in_progress', 0);
+      expect(r.status, 'in_progress');
+      expect(r.rejectionCount, 0);
+    });
+
+    test('a rejection increments the persisted count', () {
+      final r = predictTransition('rejected', 0);
+      expect(r.status, 'rejected');
+      expect(r.rejectionCount, 1);
+    });
+
+    test('the third rejection redirects to escalated (cap)', () {
+      final r = predictTransition('rejected', 2);
+      expect(r.status, 'escalated');
+      expect(r.rejectionCount, 3);
+    });
+  });
 }

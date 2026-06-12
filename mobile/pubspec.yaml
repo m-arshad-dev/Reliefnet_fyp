@@ -42,6 +42,8 @@ dependencies:
   sqlite3_flutter_libs: ^0.6.0+eol
   path_provider: ^2.1.5
   path: ^1.9.1
+  # Slice 12: client_uuid for the offline outbox (idempotency key). Pure Dart — no native plugin.
+  uuid: ^4.5.1
 
 dev_dependencies:
   flutter_test:

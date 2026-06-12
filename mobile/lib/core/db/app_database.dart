@@ -70,12 +70,40 @@ class SyncMeta extends Table {
   Set<Column> get primaryKey => {key};
 }
 
-@DriftDatabase(tables: [CachedBeneficiaries, CachedTasks, CachedCampaigns, SyncMeta])
+/// Slice 12 — the offline OUTBOX (v2 §6.4). Every field write lands here first (with a
+/// client_uuid idempotency key) alongside an optimistic cache write, and a background sync
+/// worker drains it to POST /sync/push when online. `baseStatus` / `baseVerified` carry the
+/// optimistic-concurrency base the server compares against to detect conflicts. `status`:
+/// pending → synced (merged/duplicate) | conflict (parked for web resolution) | rejected.
+class Outbox extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get clientUuid => text().unique()();
+  TextColumn get entityType => text()(); // beneficiary | task_transition | beneficiary_verify
+  TextColumn get entityId => text().nullable()(); // server entity (task / beneficiary) for transition & verify
+  TextColumn get payload => text()(); // JSON of the domain fields
+  TextColumn get baseStatus => text().nullable()(); // task status the device saw
+  BoolColumn get baseVerified => boolean().nullable()(); // beneficiary.verified the device saw
+  TextColumn get status => text().withDefault(const Constant('pending'))();
+  TextColumn get clientCreatedAt => text()(); // ISO device clock (advisory only)
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+  TextColumn get lastError => text().nullable()();
+}
+
+@DriftDatabase(tables: [CachedBeneficiaries, CachedTasks, CachedCampaigns, SyncMeta, Outbox])
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  // Slice 12 adds the Outbox table on top of Slice 11's read-cache schema (v1).
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) => m.createAll(),
+        onUpgrade: (m, from, to) async {
+          if (from < 2) await m.createTable(outbox);
+        },
+      );
 
   static const _lastKnownSeqKey = 'last_known_seq';
 
@@ -114,6 +142,12 @@ class AppDatabase extends _$AppDatabase {
             )),
       );
     });
+  }
+
+  /// Drop an optimistic local beneficiary row (its id is the client_uuid) once the canonical
+  /// server row arrives on pull — otherwise the offline cache would show the person twice.
+  Future<void> deleteCachedBeneficiary(String id) {
+    return (delete(cachedBeneficiaries)..where((t) => t.id.equals(id))).go();
   }
 
   Future<List<Beneficiary>> cachedBeneficiariesFor(String ngoId) async {
@@ -160,6 +194,71 @@ class AppDatabase extends _$AppDatabase {
             )),
       );
     });
+  }
+
+  Future<List<Task>> cachedTasksFor(String ngoId) async {
+    final rows = await (select(cachedTasks)
+          ..where((t) => t.ngoId.equals(ngoId))
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .get();
+    return rows
+        .map((r) => Task(
+              id: r.id,
+              ngoId: r.ngoId,
+              campaignId: r.campaignId,
+              title: r.title,
+              description: r.description,
+              locationId: r.locationId,
+              status: r.status,
+              rejectionCount: r.rejectionCount,
+              assignedTo: r.assignedTo,
+              createdBy: r.createdBy,
+              createdAt: r.createdAt,
+              updatedAt: r.updatedAt,
+            ))
+        .toList();
+  }
+
+  // --- Slice 12 outbox (offline writes + sync worker) ---
+
+  Future<void> enqueueOutbox(OutboxCompanion op) => into(outbox).insert(op);
+
+  /// FIFO drain order — ops apply in the sequence they were captured, so a chain of
+  /// transitions on one task (assigned→in_progress→pending_verification) replays correctly.
+  Future<List<OutboxData>> pendingOutboxOps() {
+    return (select(outbox)
+          ..where((t) => t.status.equals('pending'))
+          ..orderBy([(t) => OrderingTerm.asc(t.id)]))
+        .get();
+  }
+
+  Future<void> _setOutboxStatus(String clientUuid, String status, {String? error}) {
+    return (update(outbox)..where((t) => t.clientUuid.equals(clientUuid))).write(
+      OutboxCompanion(
+        status: Value(status),
+        lastError: error == null ? const Value.absent() : Value(error),
+      ),
+    );
+  }
+
+  Future<void> markOutboxSynced(String clientUuid) => _setOutboxStatus(clientUuid, 'synced');
+  Future<void> markOutboxConflict(String clientUuid) => _setOutboxStatus(clientUuid, 'conflict');
+  Future<void> markOutboxRejected(String clientUuid, String error) =>
+      _setOutboxStatus(clientUuid, 'rejected', error: error);
+
+  /// A pulled merged/resolved op whose client_uuid matches one of our outbox rows means the
+  /// server settled it (including a web-resolved conflict) — clear it so the badge updates.
+  Future<void> reconcileOutboxByClientUuid(String clientUuid) {
+    return (update(outbox)
+          ..where((t) => t.clientUuid.equals(clientUuid) & t.status.equals('synced').not()))
+        .write(const OutboxCompanion(status: Value('synced')));
+  }
+
+  Stream<int> watchOutboxCount(String status) {
+    final q = selectOnly(outbox)
+      ..addColumns([outbox.id.count()])
+      ..where(outbox.status.equals(status));
+    return q.map((row) => row.read(outbox.id.count()) ?? 0).watchSingle();
   }
 
   // --- Campaign picker cache ---

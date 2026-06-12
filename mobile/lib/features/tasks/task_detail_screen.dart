@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth/auth_controller.dart';
 import '../../core/network/api_exception.dart';
+import '../../core/sync/sync_service.dart';
 import '../../data/task_repository.dart';
 import '../../shared/models/task.dart';
 import '../../shared/widgets/status_badge.dart';
@@ -48,13 +49,19 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       if (note.isEmpty) note = null;
     }
 
+    final user = ref.read(authControllerProvider).user;
+    if (user == null) return;
+
     setState(() => _working = true);
     try {
+      // Offline-first: optimistic FSM advance + queued task_transition op (carries the base
+      // status for server-side conflict detection).
       final updated = await ref.read(taskRepositoryProvider).transition(
-            task.id,
+            task,
             toStatus: to,
             note: note,
             assignedTo: assignedTo,
+            actorId: user.id,
           );
       _invalidate();
       if (!mounted) return;
@@ -66,9 +73,12 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Moved to ${updated.status.replaceAll('_', ' ')}')),
+          SnackBar(content: Text('Moved to ${updated.status.replaceAll('_', ' ')} — syncing…')),
         );
       }
+      // Best-effort push now; offline leaves it queued.
+      final sync = await ref.read(syncServiceProvider).syncNow();
+      if (mounted && sync.reachedServer) _invalidate();
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -189,6 +199,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
 @visibleForTesting
 class TransitionButtons extends StatelessWidget {
   const TransitionButtons({
+    super.key,
     required this.task,
     required this.role,
     required this.working,

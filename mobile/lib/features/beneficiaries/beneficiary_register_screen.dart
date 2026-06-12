@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/auth/auth_controller.dart';
 import '../../core/network/api_exception.dart';
+import '../../core/sync/sync_service.dart';
 import '../../data/beneficiary_repository.dart';
 import '../../data/campaign_repository.dart';
 import '../../data/location_repository.dart';
@@ -78,6 +80,11 @@ class _BeneficiaryRegisterScreenState extends ConsumerState<BeneficiaryRegisterS
       setState(() => _error = 'Select a campaign.');
       return;
     }
+    final user = ref.read(authControllerProvider).user;
+    if (user?.ngoId == null) {
+      setState(() => _error = 'Your account is not scoped to an NGO.');
+      return;
+    }
     setState(() {
       _submitting = true;
       _error = null;
@@ -96,8 +103,10 @@ class _BeneficiaryRegisterScreenState extends ConsumerState<BeneficiaryRegisterS
         contactMasked: _contactMasked.text.trim().isEmpty ? null : _contactMasked.text.trim(),
         locationId: _locationId,
       );
-      final result = await ref.read(beneficiaryRepositoryProvider).register(input);
-      // Refresh the list behind us.
+      // Offline-first: writes to the local cache + outbox and returns instantly.
+      final result = await ref
+          .read(beneficiaryRepositoryProvider)
+          .register(input, ngoId: user!.ngoId!, actorId: user.id);
       ref.invalidate(beneficiaryListProvider);
       setState(() {
         _result = result;
@@ -109,8 +118,17 @@ class _BeneficiaryRegisterScreenState extends ConsumerState<BeneficiaryRegisterS
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Registered ${result.beneficiary.fullName}')),
+          SnackBar(content: Text('Saved ${result.beneficiary.fullName} — syncing…')),
         );
+      }
+      // Best-effort push now; offline leaves it queued for the next sync.
+      final sync = await ref.read(syncServiceProvider).syncNow();
+      if (mounted && !sync.reachedServer) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Offline — saved locally, will sync when connected.')),
+        );
+      } else {
+        ref.invalidate(beneficiaryListProvider);
       }
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -133,17 +151,14 @@ class _BeneficiaryRegisterScreenState extends ConsumerState<BeneficiaryRegisterS
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_result != null && _result!.duplicateFlag.flagged) ...[
-                DuplicateBanner(_result!.duplicateFlag),
-                const SizedBox(height: 16),
-              ] else if (_previewFlag != null && _previewFlag!.flagged) ...[
+              if (_previewFlag != null && _previewFlag!.flagged) ...[
                 DuplicateBanner(_previewFlag!),
                 const SizedBox(height: 16),
               ] else if (_previewFlag != null && !_previewFlag!.flagged) ...[
                 _InfoNote('No prior aid on record for this CNIC.'),
                 const SizedBox(height: 16),
-              ] else if (_result != null && !_result!.duplicateFlag.flagged) ...[
-                _InfoNote('Registered. No cross-NGO duplicate detected.', success: true),
+              ] else if (_result != null) ...[
+                _InfoNote('Saved on device — will sync to the server.', success: true),
                 const SizedBox(height: 16),
               ],
               TextFormField(
