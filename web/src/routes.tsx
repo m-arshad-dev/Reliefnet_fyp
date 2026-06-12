@@ -13,6 +13,7 @@ import { InventoryPage } from '@/features/inventory/InventoryPage';
 import { TasksPage } from '@/features/tasks/TasksPage';
 import { ReportsPage } from '@/features/reports/ReportsPage';
 import { AuditPage } from '@/features/audit/AuditPage';
+import { ReconciliationPage } from '@/features/reconciliation/ReconciliationPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -61,6 +62,13 @@ export const router = createBrowserRouter([
         // excluded (reads are never behind a write permission, and they get no audit:read).
         element: <RequireRole allow={['auditor', 'system_admin']} />,
         children: [{ path: '/audit', element: <AuditPage /> }],
+      },
+      {
+        // Sync reconciliation (Slice 12) — coordinator/admin settle offline-capture conflicts on
+        // a side-by-side diff. Mirrors the server's sync:resolve permission (field_coordinator +
+        // ngo_admin); the side-by-side diff is why this lives on web, not the mobile client.
+        element: <RequireRole allow={['ngo_admin', 'field_coordinator']} />,
+        children: [{ path: '/reconciliation', element: <ReconciliationPage /> }],
       },
       {
         element: <RequireRole allow={['ngo_admin']} />,
